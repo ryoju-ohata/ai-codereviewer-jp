@@ -117,7 +117,7 @@ function generateComments(filteredDiff, prDetails) {
             const prompt = `diffについて以下の内容を日本語で出力
 - 要約
 - 影響範囲一覧
-- テスト項目一覧
+- テスト項目 / 変更確認方法
 - 変数名や関数名などの具体的な提案(ない場合は出力しない)
 - より良い代替メソッドがあれば記載(ない場合は出力しない)
 
