@@ -116,7 +116,7 @@ function generateComments(filteredDiff, prDetails) {
                 continue; // Ignore deleted files or undefined paths
             const prompt = `diffについて以下の内容を日本語で出力
 - 要約
-- 変更の影響範囲一覧
+- 影響範囲一覧
 - テスト項目一覧
 - 変数名や関数名などの具体的な提案(ない場合は出力しない)
 - より良い代替メソッドがあれば記載(ない場合は出力しない)
@@ -155,10 +155,10 @@ function postComment(prDetails, comments) {
                 owner: prDetails.owner,
                 repo: prDetails.repo,
                 issue_number: prDetails.pull_number,
-                body: `## Summary - AI Reviewer
+                body: `# Summary - AI Reviewer
 ` +
                     Object.entries(comments)
-                        .map(([path, body]) => `### ${path}\n${body}`)
+                        .map(([path, body]) => `## ${path}\n${body}`)
                         .join("\n"),
             };
             console.log("DEBUG", "COMMENT", comment);
