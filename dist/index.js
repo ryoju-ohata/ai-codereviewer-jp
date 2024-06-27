@@ -94,6 +94,7 @@ function analyzeCode(parsedDiff, prDetails) {
                 const prompt = createPrompt(file, chunk, prDetails);
                 console.log("DEBUG", "PROMPT", prompt);
                 const aiResponse = yield getAIResponse(prompt);
+                console.log("DEBUG", "AI RESPONSE", aiResponse);
                 if (aiResponse) {
                     const newComments = createComment(file, chunk, aiResponse);
                     if (newComments) {
@@ -155,7 +156,7 @@ function getAIResponse(prompt) {
                     },
                 ] }));
             const res = ((_b = (_a = response.choices[0].message) === null || _a === void 0 ? void 0 : _a.content) === null || _b === void 0 ? void 0 : _b.trim()) || "{}";
-            console.log("AI Response:", res); // Log the response for debugging
+            // console.log("AI Response:", res); // Log the response for debugging
             // Check if the response is valid JSON
             try {
                 const parsedResponse = JSON.parse(res);
@@ -192,12 +193,12 @@ function createReviewComment(owner, repo, pull_number, comments) {
             pull_number,
             event: "COMMENT",
             comments: comments.map((comment) => ({
-                body: comment.body,
+                body: `${comment.line}行目: ${comment.body}`,
                 path: comment.path,
                 position: comment.line,
             })),
         };
-        console.log("DEBUG", review);
+        console.log("DEBUG", "REVIEW", review);
         yield octokit.pulls.createReview(review);
     });
 }

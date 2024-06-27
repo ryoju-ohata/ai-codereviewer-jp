@@ -61,6 +61,7 @@ async function analyzeCode(
       const prompt = createPrompt(file, chunk, prDetails);
       console.log("DEBUG", "PROMPT", prompt);
       const aiResponse = await getAIResponse(prompt);
+      console.log("DEBUG", "AI RESPONSE", aiResponse);
       if (aiResponse) {
         const newComments = createComment(file, chunk, aiResponse);
         if (newComments) {
@@ -131,7 +132,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
     });
 
     const res = response.choices[0].message?.content?.trim() || "{}";
-    console.log("AI Response:", res); // Log the response for debugging
+    // console.log("AI Response:", res); // Log the response for debugging
 
     // Check if the response is valid JSON
     try {
@@ -179,12 +180,12 @@ async function createReviewComment(
     pull_number,
     event: "COMMENT" as "COMMENT",
     comments: comments.map((comment) => ({
-      body: comment.body,
+      body: `${comment.line}行目: ${comment.body}`,
       path: comment.path,
       position: comment.line,
     })),
   };
-  console.log("DEBUG", review);
+  console.log("DEBUG", "REVIEW", review);
   await octokit.pulls.createReview(review);
 }
 
