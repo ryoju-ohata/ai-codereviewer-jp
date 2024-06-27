@@ -114,7 +114,7 @@ function generateComments(filteredDiff, prDetails) {
         for (const file of filteredDiff) {
             if (file.to === "/dev/null" || !file.to)
                 continue; // Ignore deleted files or undefined paths
-            const prompt = `diffについて日本語で要約と改善点を出力
+            const prompt = `diffについて日本語で要約とテスト項目を出力
 \`\`\`diff
 ${file.chunks
                 // @ts-ignore
@@ -153,7 +153,7 @@ function postComment(prDetails, comments) {
 ## Summary
 ` +
                     Object.entries(comments)
-                        .map(([path, body]) => `### ${path}\n- ${body}`)
+                        .map(([path, body]) => `### ${path}\n${body}`)
                         .join("\n"),
             };
             console.log("DEBUG", "COMMENT", comment);

@@ -68,7 +68,7 @@ async function generateComments(filteredDiff: File[], prDetails: any): Promise<{
   for (const file of filteredDiff) {
     if (file.to === "/dev/null" || !file.to) continue; // Ignore deleted files or undefined paths
 
-    const prompt = `diffについて日本語で要約と改善点を出力
+    const prompt = `diffについて日本語で要約とテスト項目を出力
 \`\`\`diff
 ${file.chunks
   // @ts-ignore
@@ -112,7 +112,7 @@ async function postComment(prDetails: any, comments: { [key: string]: string }) 
 ## Summary
 ` +
         Object.entries(comments)
-          .map(([path, body]) => `### ${path}\n- ${body}`)
+          .map(([path, body]) => `### ${path}\n${body}`)
           .join("\n"),
     };
     console.log("DEBUG", "COMMENT", comment);
