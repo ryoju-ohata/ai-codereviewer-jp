@@ -52,8 +52,8 @@ async function getDiff(owner: string, repo: string, pull_number: number): Promis
 async function analyzeCode(
   parsedDiff: File[],
   prDetails: PRDetails
-): Promise<Array<{ body: string; path: string; line: number }>> {
-  const comments: Array<{ body: string; path: string; line: number }> = [];
+): Promise<Array<{ body: string; path: string; line: number; diff: string }>> {
+  const comments: Array<{ body: string; path: string; line: number; diff: string }> = [];
 
   for (const file of parsedDiff) {
     if (file.to === "/dev/null") continue; // Ignore deleted files
@@ -98,14 +98,15 @@ ${prDetails.description}
 
 Git diff to review:
 
-\`\`\`diff
-${chunk.content}
-${chunk.changes
-  // @ts-expect-error - ln and ln2 exists where needed
-  .map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
-  .join("\n")}
-\`\`\`
+
+${createDiff(chunk)}
 `;
+}
+
+// Simplified version of the createDiff function
+function createDiff(chunk: Chunk): string {
+  return `${chunk.content}
+${chunk.changes.map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`).join("\n")}`;
 }
 
 async function getAIResponse(prompt: string): Promise<Array<{
@@ -156,7 +157,7 @@ function createComment(
     lineNumber: string;
     reviewComment: string;
   }>
-): Array<{ body: string; path: string; line: number }> {
+): Array<{ body: string; path: string; line: number; diff: string }> {
   return aiResponses.flatMap((aiResponse) => {
     if (!file.to) {
       return [];
@@ -165,8 +166,30 @@ function createComment(
       body: aiResponse.reviewComment,
       path: file.to,
       line: Number(aiResponse.lineNumber),
+      diff: createDiff(chunk),
     };
   });
+}
+
+async function createNormalComment(
+  owner: string,
+  repo: string,
+  pull_number: number,
+  comments: Array<{ body: string; path: string; line: number; diff: string }>
+): Promise<void> {
+  const comment = {
+    owner,
+    repo,
+    issue_number: pull_number,
+    body: comments
+      .map(
+        (comment) => `${comment.diff}
+${comment.path}:${comment.line}: ${comment.body}`
+      )
+      .join("\n"),
+  };
+  console.log("DEBUG", "COMMENT", comment);
+  await octokit.issues.createComment(comment);
 }
 
 async function createReviewComment(
@@ -234,7 +257,7 @@ async function main() {
 
   const comments = await analyzeCode(filteredDiff, prDetails);
   if (comments.length > 0) {
-    await createReviewComment(prDetails.owner, prDetails.repo, prDetails.pull_number, comments);
+    await createNormalComment(prDetails.owner, prDetails.repo, prDetails.pull_number, comments);
   }
 }
 

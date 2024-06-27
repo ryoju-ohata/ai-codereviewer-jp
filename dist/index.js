@@ -129,14 +129,18 @@ ${prDetails.description}
 
 Git diff to review:
 
-\`\`\`diff
+
+${createDiff(chunk)}
+`;
+}
+function createDiff(chunk) {
+    return `\`\`\`diff
 ${chunk.content}
 ${chunk.changes
         // @ts-expect-error - ln and ln2 exists where needed
         .map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
         .join("\n")}
-\`\`\`
-`;
+ \`\`\``;
 }
 function getAIResponse(prompt) {
     var _a, _b;
@@ -183,7 +187,23 @@ function createComment(file, chunk, aiResponses) {
             body: aiResponse.reviewComment,
             path: file.to,
             line: Number(aiResponse.lineNumber),
+            diff: createDiff(chunk),
         };
+    });
+}
+function createNormalComment(owner, repo, pull_number, comments) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const comment = {
+            owner,
+            repo,
+            issue_number: pull_number,
+            body: comments
+                .map((comment) => `${comment.diff}
+${comment.path}:${comment.line}: ${comment.body}`)
+                .join("\n"),
+        };
+        console.log("DEBUG", "COMMENT", comment);
+        yield octokit.issues.createComment(comment);
     });
 }
 function createReviewComment(owner, repo, pull_number, comments) {
@@ -244,7 +264,7 @@ function main() {
         });
         const comments = yield analyzeCode(filteredDiff, prDetails);
         if (comments.length > 0) {
-            yield createReviewComment(prDetails.owner, prDetails.repo, prDetails.pull_number, comments);
+            yield createNormalComment(prDetails.owner, prDetails.repo, prDetails.pull_number, comments);
         }
     });
 }
