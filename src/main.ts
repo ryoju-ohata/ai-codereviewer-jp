@@ -52,8 +52,7 @@ async function getDiff(
     pull_number,
     mediaType: { format: "diff" },
   });
-  // @ts-expect-error - response.data is a string
-  return response.data;
+  return response.data as unknown as string; // Explicitly cast to string
 }
 
 async function analyzeCode(
@@ -127,10 +126,6 @@ async function getAIResponse(prompt: string): Promise<Array<{
   try {
     const response = await openai.chat.completions.create({
       ...queryConfig,
-      // return JSON if the model supports it:
-      ...(OPENAI_API_MODEL === "gpt-4-1106-preview"
-        ? { response_format: { type: "json_object" } }
-        : {}),
       messages: [
         {
           role: "system",
@@ -140,9 +135,10 @@ async function getAIResponse(prompt: string): Promise<Array<{
     });
 
     const res = response.choices[0].message?.content?.trim() || "{}";
+    console.log("AI Response:", res); // Log the response for debugging
     return JSON.parse(res).reviews;
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error in getAIResponse:", error);
     return null;
   }
 }
@@ -177,8 +173,12 @@ async function createReviewComment(
     owner,
     repo,
     pull_number,
-    comments,
     event: "COMMENT",
+    comments: comments.map(comment => ({
+      body: comment.body,
+      path: comment.path,
+      position: comment.line,
+    })),
   });
 }
 
