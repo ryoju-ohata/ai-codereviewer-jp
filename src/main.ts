@@ -136,7 +136,15 @@ async function getAIResponse(prompt: string): Promise<Array<{
 
     const res = response.choices[0].message?.content?.trim() || "{}";
     console.log("AI Response:", res); // Log the response for debugging
-    return JSON.parse(res).reviews;
+
+    // Check if the response is valid JSON
+    try {
+      const parsedResponse = JSON.parse(res);
+      return parsedResponse.reviews;
+    } catch (jsonError) {
+      console.error("Invalid JSON response:", res);
+      return null;
+    }
   } catch (error) {
     console.error("Error in getAIResponse:", error);
     return null;
