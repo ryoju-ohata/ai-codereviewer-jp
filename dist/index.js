@@ -108,7 +108,7 @@ function analyzeCode(parsedDiff, prDetails) {
 }
 function createPrompt(file, chunk, prDetails) {
     return `Your task is to review pull requests. Instructions:
-- Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewTitle": "<review title>", "reviewComment": "<review comment>", "improveCode": "<improve code>"}]}
+- Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewTitle": "<review title>", "reviewComment": "<review comment>", "improveDiff": "<improve diff>"}]}
 - Do not give positive comments or compliments.
 - Provide comments and suggestions ONLY if there is something to improve, otherwise "reviews" should be an empty array.
 - Write the comment in GitHub Markdown format.
@@ -182,7 +182,7 @@ function createComment(file, chunk, aiResponses) {
             body: aiResponse.reviewComment,
             path: file.to,
             line: Number(aiResponse.lineNumber),
-            improve: aiResponse.improveCode,
+            improve: aiResponse.improveDiff,
         };
     });
 }
@@ -194,9 +194,12 @@ function createNormalComment(owner, repo, pull_number, comments) {
             issue_number: pull_number,
             body: "# AI Reviewer\n\n" +
                 comments
-                    .map((comment) => `## ${comment.title}(${comment.path}:${comment.line})
+                    .map((comment) => `### ${comment.title}(${comment.path}:${comment.line})
 ${comment.body}
-${comment.improve}`)
+\`\`\`diff
+${comment.improve}
+\`\`\`
+`)
                     .join("\n"),
         };
         console.log("DEBUG", "COMMENT", comment);

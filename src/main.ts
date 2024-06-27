@@ -75,7 +75,7 @@ async function analyzeCode(
 
 function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
   return `Your task is to review pull requests. Instructions:
-- Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewTitle": "<review title>", "reviewComment": "<review comment>", "improveCode": "<improve code>"}]}
+- Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewTitle": "<review title>", "reviewComment": "<review comment>", "improveDiff": "<improve diff>"}]}
 - Do not give positive comments or compliments.
 - Provide comments and suggestions ONLY if there is something to improve, otherwise "reviews" should be an empty array.
 - Write the comment in GitHub Markdown format.
@@ -110,7 +110,7 @@ async function getAIResponse(prompt: string): Promise<Array<{
   lineNumber: string;
   reviewTitle: string;
   reviewComment: string;
-  improveCode: string;
+  improveDiff: string;
 }> | null> {
   const queryConfig = {
     model: OPENAI_API_MODEL,
@@ -156,7 +156,7 @@ function createComment(
     lineNumber: string;
     reviewTitle: string;
     reviewComment: string;
-    improveCode: string;
+    improveDiff: string;
   }>
 ): Array<{ title: string; body: string; path: string; line: number; improve: string }> {
   return aiResponses.flatMap((aiResponse) => {
@@ -168,7 +168,7 @@ function createComment(
       body: aiResponse.reviewComment,
       path: file.to,
       line: Number(aiResponse.lineNumber),
-      improve: aiResponse.improveCode,
+      improve: aiResponse.improveDiff,
     };
   });
 }
@@ -187,9 +187,12 @@ async function createNormalComment(
       "# AI Reviewer\n\n" +
       comments
         .map(
-          (comment) => `## ${comment.title}(${comment.path}:${comment.line})
+          (comment) => `### ${comment.title}(${comment.path}:${comment.line})
 ${comment.body}
-${comment.improve}`
+\`\`\`diff
+${comment.improve}
+\`\`\`
+`
         )
         .join("\n"),
   };
