@@ -24,9 +24,9 @@ interface PRDetails {
 }
 
 async function getPRDetails(): Promise<PRDetails> {
-  const { repository, number } = JSON.parse(
-    readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8")
-  );
+  console.log("DEBUG", process.env.GITHUB_EVENT_PATH);
+  console.log("DEBUG", readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8"));
+  const { repository, number } = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8"));
   const prResponse = await octokit.pulls.get({
     owner: repository.owner.login,
     repo: repository.name,
@@ -41,11 +41,7 @@ async function getPRDetails(): Promise<PRDetails> {
   };
 }
 
-async function getDiff(
-  owner: string,
-  repo: string,
-  pull_number: number
-): Promise<string | null> {
+async function getDiff(owner: string, repo: string, pull_number: number): Promise<string | null> {
   const response = await octokit.pulls.get({
     owner,
     repo,
@@ -182,7 +178,7 @@ async function createReviewComment(
     repo,
     pull_number,
     event: "COMMENT",
-    comments: comments.map(comment => ({
+    comments: comments.map((comment) => ({
       body: comment.body,
       path: comment.path,
       position: comment.line,
@@ -193,16 +189,10 @@ async function createReviewComment(
 async function main() {
   const prDetails = await getPRDetails();
   let diff: string | null;
-  const eventData = JSON.parse(
-    readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")
-  );
+  const eventData = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
 
   if (eventData.action === "opened") {
-    diff = await getDiff(
-      prDetails.owner,
-      prDetails.repo,
-      prDetails.pull_number
-    );
+    diff = await getDiff(prDetails.owner, prDetails.repo, prDetails.pull_number);
   } else if (eventData.action === "synchronize") {
     const newBaseSha = eventData.before;
     const newHeadSha = eventData.after;
@@ -229,26 +219,18 @@ async function main() {
   }
 
   const parsedDiff = parseDiff(diff);
-
   const excludePatterns = core
     .getInput("exclude")
     .split(",")
     .map((s) => s.trim());
 
   const filteredDiff = parsedDiff.filter((file) => {
-    return !excludePatterns.some((pattern) =>
-      minimatch(file.to ?? "", pattern)
-    );
+    return !excludePatterns.some((pattern) => minimatch(file.to ?? "", pattern));
   });
 
   const comments = await analyzeCode(filteredDiff, prDetails);
   if (comments.length > 0) {
-    await createReviewComment(
-      prDetails.owner,
-      prDetails.repo,
-      prDetails.pull_number,
-      comments
-    );
+    await createReviewComment(prDetails.owner, prDetails.repo, prDetails.pull_number, comments);
   }
 }
 
