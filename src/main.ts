@@ -2,7 +2,7 @@ import { readFileSync } from "fs";
 import * as core from "@actions/core";
 import OpenAI from "openai";
 import { Octokit } from "@octokit/rest";
-import parseDiff, { Chunk, File } from "parse-diff";
+import parseDiff, { Change, Chunk, File } from "parse-diff";
 import minimatch from "minimatch";
 
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
@@ -52,8 +52,8 @@ async function getDiff(owner: string, repo: string, pull_number: number): Promis
 async function analyzeCode(
   parsedDiff: File[],
   prDetails: PRDetails
-): Promise<Array<{ body: string; path: string; line: number; diff: string }>> {
-  const comments: Array<{ body: string; path: string; line: number; diff: string }> = [];
+): Promise<Array<{ title: string; body: string; path: string; line: number; improve: string }>> {
+  const comments: Array<{ title: string; body: string; path: string; line: number; improve: string }> = [];
 
   for (const file of parsedDiff) {
     if (file.to === "/dev/null") continue; // Ignore deleted files
@@ -75,12 +75,11 @@ async function analyzeCode(
 
 function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
   return `Your task is to review pull requests. Instructions:
-- Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewComment": "<review comment>"}]}
+- Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewTitle": "<review title>", "reviewComment": "<review comment>", "improveCode": "<improve code>"}]}
 - Do not give positive comments or compliments.
 - Provide comments and suggestions ONLY if there is something to improve, otherwise "reviews" should be an empty array.
 - Write the comment in GitHub Markdown format.
 - Do not generate JSON code blocks
-- Only write the lines that are added in the diff.
 - Use the given description only for the overall context and only comment the code.
 - IMPORTANT: NEVER suggest adding comments to the code.
 - Write in Japanese.
@@ -98,20 +97,20 @@ ${prDetails.description}
 
 Git diff to review:
 
-
-${createDiff(chunk)}
+\`\`\`diff
+${chunk.changes
+  // @ts-expect-error - ln and ln2 exists where needed
+  .map((c: Change) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
+  .join("\n")}}
+\`\`\`
 `;
-}
-
-// Simplified version of the createDiff function
-function createDiff(chunk: Chunk): string {
-  return `${chunk.content}
-${chunk.changes.map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`).join("\n")}`;
 }
 
 async function getAIResponse(prompt: string): Promise<Array<{
   lineNumber: string;
+  reviewTitle: string;
   reviewComment: string;
+  improveCode: string;
 }> | null> {
   const queryConfig = {
     model: OPENAI_API_MODEL,
@@ -155,18 +154,21 @@ function createComment(
   chunk: Chunk,
   aiResponses: Array<{
     lineNumber: string;
+    reviewTitle: string;
     reviewComment: string;
+    improveCode: string;
   }>
-): Array<{ body: string; path: string; line: number; diff: string }> {
+): Array<{ title: string; body: string; path: string; line: number; improve: string }> {
   return aiResponses.flatMap((aiResponse) => {
     if (!file.to) {
       return [];
     }
     return {
+      title: aiResponse.reviewTitle,
       body: aiResponse.reviewComment,
       path: file.to,
       line: Number(aiResponse.lineNumber),
-      diff: createDiff(chunk),
+      improve: aiResponse.improveCode,
     };
   });
 }
@@ -175,43 +177,46 @@ async function createNormalComment(
   owner: string,
   repo: string,
   pull_number: number,
-  comments: Array<{ body: string; path: string; line: number; diff: string }>
+  comments: Array<{ title: string; body: string; path: string; line: number; improve: string }>
 ): Promise<void> {
   const comment = {
     owner,
     repo,
     issue_number: pull_number,
-    body: comments
-      .map(
-        (comment) => `${comment.diff}
-${comment.path}:${comment.line}: ${comment.body}`
-      )
-      .join("\n"),
+    body:
+      "# AI Reviewer\n\n" +
+      comments
+        .map(
+          (comment) => `## ${comment.title}(${comment.path}:${comment.line})
+${comment.body}
+${comment.improve}`
+        )
+        .join("\n"),
   };
   console.log("DEBUG", "COMMENT", comment);
   await octokit.issues.createComment(comment);
 }
 
-async function createReviewComment(
-  owner: string,
-  repo: string,
-  pull_number: number,
-  comments: Array<{ body: string; path: string; line: number }>
-): Promise<void> {
-  const review = {
-    owner,
-    repo,
-    pull_number,
-    event: "COMMENT" as "COMMENT",
-    comments: comments.map((comment) => ({
-      body: `${comment.line}行目: ${comment.body}`,
-      path: comment.path,
-      position: comment.line,
-    })),
-  };
-  console.log("DEBUG", "REVIEW", review);
-  await octokit.pulls.createReview(review);
-}
+// async function createReviewComment(
+//   owner: string,
+//   repo: string,
+//   pull_number: number,
+//   comments: Array<{ body: string; path: string; line: number; improve: string }>
+// ): Promise<void> {
+//   const review = {
+//     owner,
+//     repo,
+//     pull_number,
+//     event: "COMMENT" as "COMMENT",
+//     comments: comments.map((comment) => ({
+//       body: `${comment.line}行目: ${comment.body}`,
+//       path: comment.path,
+//       position: comment.line,
+//     })),
+//   };
+//   console.log("DEBUG", "REVIEW", review);
+//   await octokit.pulls.createReview(review);
+// }
 
 async function main() {
   const prDetails = await getPRDetails();
