@@ -187,7 +187,7 @@ function createComment(file, chunk, aiResponses) {
 }
 function createReviewComment(owner, repo, pull_number, comments) {
     return __awaiter(this, void 0, void 0, function* () {
-        yield octokit.pulls.createReview({
+        const review = {
             owner,
             repo,
             pull_number,
@@ -197,7 +197,9 @@ function createReviewComment(owner, repo, pull_number, comments) {
                 path: comment.path,
                 position: comment.line,
             })),
-        });
+        };
+        console.log("DEBUG", review);
+        yield octokit.pulls.createReview(review);
     });
 }
 function main() {

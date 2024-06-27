@@ -174,17 +174,19 @@ async function createReviewComment(
   pull_number: number,
   comments: Array<{ body: string; path: string; line: number }>
 ): Promise<void> {
-  await octokit.pulls.createReview({
+  const review = {
     owner,
     repo,
     pull_number,
-    event: "COMMENT",
+    event: "COMMENT" as "COMMENT",
     comments: comments.map((comment) => ({
       body: comment.body,
       path: comment.path,
       position: comment.line,
     })),
-  });
+  };
+  console.log("DEBUG", review);
+  await octokit.pulls.createReview(review);
 }
 
 async function main() {
