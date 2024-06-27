@@ -116,33 +116,13 @@ function main() {
         for (const file of filteredDiff) {
             if (file.to === "/dev/null" || !file.to)
                 continue; // Ignore deleted files or undefined paths
-            const fileContent = yield octokit.repos.getContent({
-                owner: prDetails.owner,
-                repo: prDetails.repo,
-                path: file.to,
-                ref: "main",
-            });
-            const prompt = `Your task is to review pull requests. Instructions:
-- Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewTitle": "<review title>", "reviewComment": "<review comment>", "improveDiff": "<improve diff>"}]}
-- Do not give positive comments or compliments.
-- Provide comments and suggestions ONLY if there is something to improve, otherwise "reviews" should be an empty array.
-- Write the comment in GitHub Markdown format.
-- Do not generate JSON code blocks
-- Use the given description only for the overall context and only comment the code.
-- IMPORTANT: NEVER suggest adding comments to the code.
-- Write in Japanese.
-
-Review the following code diff in the file "${file.to}" and take the pull request title and description into account when writing the response.
-  
-Pull request title: ${prDetails.title}
-Pull request description:
-
----
-${prDetails.description}
----
-
-Git diff to review:
-
+            // const fileContent = await octokit.repos.getContent({
+            //   owner: prDetails.owner,
+            //   repo: prDetails.repo,
+            //   path: file.to,
+            //   ref: "main",
+            // });
+            const prompt = `diffを日本語で要約して
 \`\`\`diff
 ${file.chunks
                 // @ts-ignore
@@ -150,6 +130,31 @@ ${file.chunks
                 .join("\n")}
 \`\`\`
 `;
+            //     const prompt = `Your task is to review pull requests. Instructions:
+            // - Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewTitle": "<review title>", "reviewComment": "<review comment>", "improveDiff": "<improve diff>"}]}
+            // - Do not give positive comments or compliments.
+            // - Provide comments and suggestions ONLY if there is something to improve, otherwise "reviews" should be an empty array.
+            // - Write the comment in GitHub Markdown format.
+            // - Do not generate JSON code blocks
+            // - Use the given description only for the overall context and only comment the code.
+            // - IMPORTANT: NEVER suggest adding comments to the code.
+            // - Write in Japanese.
+            // Review the following code diff in the file "${
+            //       file.to
+            //     }" and take the pull request title and description into account when writing the response.
+            // Pull request title: ${prDetails.title}
+            // Pull request description:
+            // ---
+            // ${prDetails.description}
+            // ---
+            // Git diff to review:
+            // \`\`\`diff
+            // ${file.chunks
+            //   // @ts-ignore
+            //   .map((chunk: Chunk) => chunk.changes.map((c: Change) => `${c.ln ? c.ln : c.ln2} ${c.content}`).join("\n"))
+            //   .join("\n")}
+            // \`\`\`
+            // `;
             const queryConfig = {
                 model: OPENAI_API_MODEL,
                 temperature: 0.2,
@@ -168,16 +173,22 @@ ${file.chunks
                 const res = ((_e = (_d = response.choices[0].message) === null || _d === void 0 ? void 0 : _d.content) === null || _e === void 0 ? void 0 : _e.trim()) || "{}";
                 try {
                     const parsedResponse = JSON.parse(res);
-                    const aiResponses = parsedResponse.reviews;
-                    aiResponses.forEach((aiResponse) => {
-                        comments.push({
-                            title: aiResponse.reviewTitle,
-                            body: aiResponse.reviewComment,
-                            path: file.to,
-                            line: Number(aiResponse.lineNumber),
-                            improve: aiResponse.improveDiff,
-                        });
+                    comments.push({
+                        body: parsedResponse,
+                        path: file.to,
                     });
+                    // const aiResponses = parsedResponse.reviews;
+                    // aiResponses.forEach(
+                    //   (aiResponse: { lineNumber: string; reviewTitle: string; reviewComment: string; improveDiff: string }) => {
+                    //     comments.push({
+                    //       title: aiResponse.reviewTitle,
+                    //       body: aiResponse.reviewComment,
+                    //       path: file.to!,
+                    //       line: Number(aiResponse.lineNumber),
+                    //       improve: aiResponse.improveDiff,
+                    //     });
+                    //   }
+                    // );
                 }
                 catch (jsonError) {
                     console.error("Invalid JSON response:", res);
@@ -194,12 +205,8 @@ ${file.chunks
                 issue_number: prDetails.pull_number,
                 body: "# AI Reviewer\n\n" +
                     comments
-                        .map((comment) => `### ${comment.title}(${comment.path}:${comment.line})
-${comment.body}
-\`\`\`diff
-${comment.improve}
-\`\`\`
-`)
+                        .map((comment) => `${comment.path}
+${comment.body}`)
                         .join("\n"),
             };
             console.log("DEBUG", "COMMENT", comment);
