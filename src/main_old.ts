@@ -2,7 +2,8 @@ import { readFileSync } from "fs";
 import * as core from "@actions/core";
 import OpenAI from "openai";
 import { Octokit } from "@octokit/rest";
-import parseDiff, { File } from "parse-diff";
+import parseDiff, { Change, Chunk, File } from "parse-diff";
+import minimatch from "minimatch";
 
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
@@ -48,18 +49,31 @@ async function getDiff(owner: string, repo: string, pull_number: number): Promis
   return response.data as unknown as string; // Explicitly cast to string
 }
 
-async function getFileContent(owner: string, repo: string, path: string, ref: string): Promise<string> {
-  const response = await octokit.repos.getContent({
-    owner,
-    repo,
-    path,
-    ref,
-  });
-  const content = Buffer.from((response.data as any).content || "", "base64").toString("utf8");
-  return content;
+async function analyzeCode(
+  parsedDiff: File[],
+  prDetails: PRDetails
+): Promise<Array<{ title: string; body: string; path: string; line: number; improve: string }>> {
+  const comments: Array<{ title: string; body: string; path: string; line: number; improve: string }> = [];
+
+  for (const file of parsedDiff) {
+    if (file.to === "/dev/null") continue; // Ignore deleted files
+    for (const chunk of file.chunks) {
+      const prompt = createPrompt(file, chunk, prDetails);
+      console.log("DEBUG", "PROMPT", prompt);
+      const aiResponse = await getAIResponse(prompt);
+      console.log("DEBUG", "AI RESPONSE", aiResponse);
+      if (aiResponse) {
+        const newComments = createComment(file, chunk, aiResponse);
+        if (newComments) {
+          comments.push(...newComments);
+        }
+      }
+    }
+  }
+  return comments;
 }
 
-function createPrompt(fileContent: string, prDetails: PRDetails): string {
+function createPrompt(file: File, chunk: Chunk, prDetails: PRDetails): string {
   return `Your task is to review pull requests. Instructions:
 - Provide the response in following JSON format:  {"reviews": [{"lineNumber":  <line_number>, "reviewTitle": "<review title>", "reviewComment": "<review comment>", "improveDiff": "<improve diff>"}]}
 - Do not give positive comments or compliments.
@@ -70,7 +84,9 @@ function createPrompt(fileContent: string, prDetails: PRDetails): string {
 - IMPORTANT: NEVER suggest adding comments to the code.
 - Write in Japanese.
 
-Review the following code and take the pull request title and description into account when writing the response.
+Review the following code diff in the file "${
+    file.to
+  }" and take the pull request title and description into account when writing the response.
   
 Pull request title: ${prDetails.title}
 Pull request description:
@@ -79,10 +95,13 @@ Pull request description:
 ${prDetails.description}
 ---
 
-Code to review:
+Git diff to review:
 
-\`\`\`
-${fileContent}
+\`\`\`diff
+${chunk.changes
+  // @ts-expect-error - ln and ln2 exists where needed
+  .map((c: Change) => `${c.ln ? c.ln : c.ln2} ${c.content}`)
+  .join("\n")}}
 \`\`\`
 `;
 }
@@ -114,7 +133,9 @@ async function getAIResponse(prompt: string): Promise<Array<{
     });
 
     const res = response.choices[0].message?.content?.trim() || "{}";
+    // console.log("AI Response:", res); // Log the response for debugging
 
+    // Check if the response is valid JSON
     try {
       const parsedResponse = JSON.parse(res);
       return parsedResponse.reviews;
@@ -128,7 +149,31 @@ async function getAIResponse(prompt: string): Promise<Array<{
   }
 }
 
-async function createComment(
+function createComment(
+  file: File,
+  chunk: Chunk,
+  aiResponses: Array<{
+    lineNumber: string;
+    reviewTitle: string;
+    reviewComment: string;
+    improveDiff: string;
+  }>
+): Array<{ title: string; body: string; path: string; line: number; improve: string }> {
+  return aiResponses.flatMap((aiResponse) => {
+    if (!file.to) {
+      return [];
+    }
+    return {
+      title: aiResponse.reviewTitle,
+      body: aiResponse.reviewComment,
+      path: file.to,
+      line: Number(aiResponse.lineNumber),
+      improve: aiResponse.improveDiff,
+    };
+  });
+}
+
+async function createNormalComment(
   owner: string,
   repo: string,
   pull_number: number,
@@ -151,12 +196,57 @@ ${comment.improve}
         )
         .join("\n"),
   };
+  console.log("DEBUG", "COMMENT", comment);
   await octokit.issues.createComment(comment);
 }
 
+// async function createReviewComment(
+//   owner: string,
+//   repo: string,
+//   pull_number: number,
+//   comments: Array<{ body: string; path: string; line: number; improve: string }>
+// ): Promise<void> {
+//   const review = {
+//     owner,
+//     repo,
+//     pull_number,
+//     event: "COMMENT" as "COMMENT",
+//     comments: comments.map((comment) => ({
+//       body: `${comment.line}行目: ${comment.body}`,
+//       path: comment.path,
+//       position: comment.line,
+//     })),
+//   };
+//   console.log("DEBUG", "REVIEW", review);
+//   await octokit.pulls.createReview(review);
+// }
+
 async function main() {
   const prDetails = await getPRDetails();
-  const diff = await getDiff(prDetails.owner, prDetails.repo, prDetails.pull_number);
+  let diff: string | null;
+  const eventData = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
+
+  if (eventData.action === "opened") {
+    diff = await getDiff(prDetails.owner, prDetails.repo, prDetails.pull_number);
+  } else if (eventData.action === "synchronize") {
+    const newBaseSha = eventData.before;
+    const newHeadSha = eventData.after;
+
+    const response = await octokit.repos.compareCommits({
+      headers: {
+        accept: "application/vnd.github.v3.diff",
+      },
+      owner: prDetails.owner,
+      repo: prDetails.repo,
+      base: newBaseSha,
+      head: newHeadSha,
+    });
+
+    diff = String(response.data);
+  } else {
+    console.log("Unsupported event:", process.env.GITHUB_EVENT_NAME);
+    return;
+  }
 
   if (!diff) {
     console.log("No diff found");
@@ -164,28 +254,18 @@ async function main() {
   }
 
   const parsedDiff = parseDiff(diff);
-  const comments: Array<{ title: string; body: string; path: string; line: number; improve: string }> = [];
+  const excludePatterns = core
+    .getInput("exclude")
+    .split(",")
+    .map((s) => s.trim());
 
-  for (const file of parsedDiff) {
-    if (file.to === "/dev/null") continue; // Ignore deleted files
-    const fileContent = await getFileContent(prDetails.owner, prDetails.repo, file.to!, "main");
-    const prompt = createPrompt(fileContent, prDetails);
-    const aiResponse = await getAIResponse(prompt);
-    if (aiResponse) {
-      comments.push(
-        ...aiResponse.map((response) => ({
-          title: response.reviewTitle,
-          body: response.reviewComment,
-          path: file.to || "",
-          line: Number(response.lineNumber),
-          improve: response.improveDiff,
-        }))
-      );
-    }
-  }
+  const filteredDiff = parsedDiff.filter((file) => {
+    return !excludePatterns.some((pattern) => minimatch(file.to ?? "", pattern));
+  });
 
+  const comments = await analyzeCode(filteredDiff, prDetails);
   if (comments.length > 0) {
-    await createComment(prDetails.owner, prDetails.repo, prDetails.pull_number, comments);
+    await createNormalComment(prDetails.owner, prDetails.repo, prDetails.pull_number, comments);
   }
 }
 
