@@ -76,7 +76,7 @@ async function main() {
     return !excludePatterns.some((pattern) => minimatch(file.to ?? "", pattern));
   });
 
-  const comments: Array<{ body: string; path: string }> = [];
+  const comments: { [key: string]: string } = {};
 
   for (const file of filteredDiff) {
     if (file.to === "/dev/null" || !file.to) continue; // Ignore deleted files or undefined paths
@@ -150,10 +150,7 @@ ${file.chunks
 
       const res = response.choices[0].message?.content?.trim() || "{}";
 
-      comments.push({
-        body: res,
-        path: file.to!,
-      });
+      comments[file.to!] = res;
       // const aiResponses = parsedResponse.reviews;
 
       // aiResponses.forEach(
@@ -172,17 +169,19 @@ ${file.chunks
     }
   }
 
-  if (comments.length > 0) {
+  if (Object.keys(comments).length > 0) {
     const comment = {
       owner: prDetails.owner,
       repo: prDetails.repo,
       issue_number: prDetails.pull_number,
       body:
-        "# AI Reviewer\n\n" +
-        comments
+        `# AI Reviewer
+## Summary
+` +
+        Object.entries(comments)
           .map(
-            (comment) => `${comment.path}
-${comment.body}`
+            ([path, body]) => `### ${path}
+- ${body}`
           )
           .join("\n"),
     };

@@ -112,7 +112,7 @@ function main() {
         const filteredDiff = parsedDiff.filter((file) => {
             return !excludePatterns.some((pattern) => { var _a; return (0, minimatch_1.default)((_a = file.to) !== null && _a !== void 0 ? _a : "", pattern); });
         });
-        const comments = [];
+        const comments = {};
         for (const file of filteredDiff) {
             if (file.to === "/dev/null" || !file.to)
                 continue; // Ignore deleted files or undefined paths
@@ -171,10 +171,7 @@ ${file.chunks
                         },
                     ] }));
                 const res = ((_e = (_d = response.choices[0].message) === null || _d === void 0 ? void 0 : _d.content) === null || _e === void 0 ? void 0 : _e.trim()) || "{}";
-                comments.push({
-                    body: res,
-                    path: file.to,
-                });
+                comments[file.to] = res;
                 // const aiResponses = parsedResponse.reviews;
                 // aiResponses.forEach(
                 //   (aiResponse: { lineNumber: string; reviewTitle: string; reviewComment: string; improveDiff: string }) => {
@@ -192,15 +189,17 @@ ${file.chunks
                 console.error("Error in getAIResponse:", error);
             }
         }
-        if (comments.length > 0) {
+        if (Object.keys(comments).length > 0) {
             const comment = {
                 owner: prDetails.owner,
                 repo: prDetails.repo,
                 issue_number: prDetails.pull_number,
-                body: "# AI Reviewer\n\n" +
-                    comments
-                        .map((comment) => `${comment.path}
-${comment.body}`)
+                body: `# AI Reviewer
+## Summary
+` +
+                    Object.entries(comments)
+                        .map(([path, body]) => `### ${path}
+- ${body}`)
                         .join("\n"),
             };
             console.log("DEBUG", "COMMENT", comment);
