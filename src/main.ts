@@ -24,8 +24,6 @@ interface PRDetails {
 }
 
 async function getPRDetails(): Promise<PRDetails> {
-  console.log("DEBUG", process.env.GITHUB_EVENT_PATH);
-  console.log("DEBUG", readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8"));
   const { repository, number } = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8"));
   const prResponse = await octokit.pulls.get({
     owner: repository.owner.login,
@@ -61,6 +59,7 @@ async function analyzeCode(
     if (file.to === "/dev/null") continue; // Ignore deleted files
     for (const chunk of file.chunks) {
       const prompt = createPrompt(file, chunk, prDetails);
+      console.log("DEBUG", "PROMPT", prompt);
       const aiResponse = await getAIResponse(prompt);
       if (aiResponse) {
         const newComments = createComment(file, chunk, aiResponse);

@@ -58,8 +58,6 @@ const openai = new openai_1.default({
 function getPRDetails() {
     var _a, _b;
     return __awaiter(this, void 0, void 0, function* () {
-        console.log("DEBUG", process.env.GITHUB_EVENT_PATH);
-        console.log("DEBUG", (0, fs_1.readFileSync)(process.env.GITHUB_EVENT_PATH || "", "utf8"));
         const { repository, number } = JSON.parse((0, fs_1.readFileSync)(process.env.GITHUB_EVENT_PATH || "", "utf8"));
         const prResponse = yield octokit.pulls.get({
             owner: repository.owner.login,
@@ -94,6 +92,7 @@ function analyzeCode(parsedDiff, prDetails) {
                 continue; // Ignore deleted files
             for (const chunk of file.chunks) {
                 const prompt = createPrompt(file, chunk, prDetails);
+                console.log("DEBUG", "PROMPT", prompt);
                 const aiResponse = yield getAIResponse(prompt);
                 if (aiResponse) {
                     const newComments = createComment(file, chunk, aiResponse);
