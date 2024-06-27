@@ -171,28 +171,22 @@ ${file.chunks
                         },
                     ] }));
                 const res = ((_e = (_d = response.choices[0].message) === null || _d === void 0 ? void 0 : _d.content) === null || _e === void 0 ? void 0 : _e.trim()) || "{}";
-                try {
-                    const parsedResponse = JSON.parse(res);
-                    comments.push({
-                        body: parsedResponse,
-                        path: file.to,
-                    });
-                    // const aiResponses = parsedResponse.reviews;
-                    // aiResponses.forEach(
-                    //   (aiResponse: { lineNumber: string; reviewTitle: string; reviewComment: string; improveDiff: string }) => {
-                    //     comments.push({
-                    //       title: aiResponse.reviewTitle,
-                    //       body: aiResponse.reviewComment,
-                    //       path: file.to!,
-                    //       line: Number(aiResponse.lineNumber),
-                    //       improve: aiResponse.improveDiff,
-                    //     });
-                    //   }
-                    // );
-                }
-                catch (jsonError) {
-                    console.error("Invalid JSON response:", res);
-                }
+                comments.push({
+                    body: res,
+                    path: file.to,
+                });
+                // const aiResponses = parsedResponse.reviews;
+                // aiResponses.forEach(
+                //   (aiResponse: { lineNumber: string; reviewTitle: string; reviewComment: string; improveDiff: string }) => {
+                //     comments.push({
+                //       title: aiResponse.reviewTitle,
+                //       body: aiResponse.reviewComment,
+                //       path: file.to!,
+                //       line: Number(aiResponse.lineNumber),
+                //       improve: aiResponse.improveDiff,
+                //     });
+                //   }
+                // );
             }
             catch (error) {
                 console.error("Error in getAIResponse:", error);

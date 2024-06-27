@@ -150,28 +150,23 @@ ${file.chunks
 
       const res = response.choices[0].message?.content?.trim() || "{}";
 
-      try {
-        const parsedResponse = JSON.parse(res);
-        comments.push({
-          body: parsedResponse,
-          path: file.to!,
-        });
-        // const aiResponses = parsedResponse.reviews;
+      comments.push({
+        body: res,
+        path: file.to!,
+      });
+      // const aiResponses = parsedResponse.reviews;
 
-        // aiResponses.forEach(
-        //   (aiResponse: { lineNumber: string; reviewTitle: string; reviewComment: string; improveDiff: string }) => {
-        //     comments.push({
-        //       title: aiResponse.reviewTitle,
-        //       body: aiResponse.reviewComment,
-        //       path: file.to!,
-        //       line: Number(aiResponse.lineNumber),
-        //       improve: aiResponse.improveDiff,
-        //     });
-        //   }
-        // );
-      } catch (jsonError) {
-        console.error("Invalid JSON response:", res);
-      }
+      // aiResponses.forEach(
+      //   (aiResponse: { lineNumber: string; reviewTitle: string; reviewComment: string; improveDiff: string }) => {
+      //     comments.push({
+      //       title: aiResponse.reviewTitle,
+      //       body: aiResponse.reviewComment,
+      //       path: file.to!,
+      //       line: Number(aiResponse.lineNumber),
+      //       improve: aiResponse.improveDiff,
+      //     });
+      //   }
+      // );
     } catch (error) {
       console.error("Error in getAIResponse:", error);
     }
