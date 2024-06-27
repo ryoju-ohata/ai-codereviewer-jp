@@ -81,8 +81,7 @@ function getDiff(owner, repo, pull_number) {
             pull_number,
             mediaType: { format: "diff" },
         });
-        // @ts-expect-error - response.data is a string
-        return response.data;
+        return response.data; // Explicitly cast to string
     });
 }
 function analyzeCode(parsedDiff, prDetails) {
@@ -113,6 +112,7 @@ function createPrompt(file, chunk, prDetails) {
 - Write the comment in GitHub Markdown format.
 - Use the given description only for the overall context and only comment the code.
 - IMPORTANT: NEVER suggest adding comments to the code.
+- Write in Japanese.
 
 Review the following code diff in the file "${file.to}" and take the pull request title and description into account when writing the response.
   
@@ -146,19 +146,26 @@ function getAIResponse(prompt) {
             presence_penalty: 0,
         };
         try {
-            const response = yield openai.chat.completions.create(Object.assign(Object.assign(Object.assign({}, queryConfig), (OPENAI_API_MODEL === "gpt-4-1106-preview"
-                ? { response_format: { type: "json_object" } }
-                : {})), { messages: [
+            const response = yield openai.chat.completions.create(Object.assign(Object.assign({}, queryConfig), { messages: [
                     {
                         role: "system",
                         content: prompt,
                     },
                 ] }));
             const res = ((_b = (_a = response.choices[0].message) === null || _a === void 0 ? void 0 : _a.content) === null || _b === void 0 ? void 0 : _b.trim()) || "{}";
-            return JSON.parse(res).reviews;
+            console.log("AI Response:", res); // Log the response for debugging
+            // Check if the response is valid JSON
+            try {
+                const parsedResponse = JSON.parse(res);
+                return parsedResponse.reviews;
+            }
+            catch (jsonError) {
+                console.error("Invalid JSON response:", res);
+                return null;
+            }
         }
         catch (error) {
-            console.error("Error:", error);
+            console.error("Error in getAIResponse:", error);
             return null;
         }
     });
@@ -181,8 +188,12 @@ function createReviewComment(owner, repo, pull_number, comments) {
             owner,
             repo,
             pull_number,
-            comments,
             event: "COMMENT",
+            comments: comments.map(comment => ({
+                body: comment.body,
+                path: comment.path,
+                position: comment.line,
+            })),
         });
     });
 }
