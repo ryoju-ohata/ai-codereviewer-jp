@@ -51,6 +51,11 @@ const minimatch_1 = __importDefault(__nccwpck_require__(2002));
 const GITHUB_TOKEN = core.getInput("GITHUB_TOKEN");
 const OPENAI_API_KEY = core.getInput("OPENAI_API_KEY");
 const OPENAI_API_MODEL = core.getInput("OPENAI_API_MODEL");
+const EXCLUDE_PATTERNS = core
+    .getInput("exclude")
+    .split(",")
+    .map((s) => s.trim());
+const DOCS_MD = core.getInput("docs_md");
 const octokit = new rest_1.Octokit({ auth: GITHUB_TOKEN });
 const openai = new openai_1.default({
     apiKey: OPENAI_API_KEY,
@@ -111,15 +116,26 @@ function generateComments(filteredDiff, prDetails) {
     var _a, _b;
     return __awaiter(this, void 0, void 0, function* () {
         const comments = {};
+        let docsContent = "";
+        // Read the markdown content from DOCS_MD
+        if (DOCS_MD) {
+            try {
+                console.log("DEBUG", "DOCS_MD", DOCS_MD);
+                docsContent = (0, fs_1.readFileSync)(DOCS_MD, "utf8");
+            }
+            catch (error) {
+                console.error("Error reading DOCS_MD file:", error);
+            }
+        }
         for (const file of filteredDiff) {
             if (file.to === "/dev/null" || !file.to)
                 continue; // Ignore deleted files or undefined paths
             const prompt = `diffについて以下の内容を日本語で出力
-- 要約
-- 影響範囲一覧
+- 変更点
 - テスト項目 / 変更確認方法
-- 変数名や関数名などの具体的な提案(ない場合は出力しない)
-- より良い代替メソッドがあれば記載(ない場合は出力しない)
+- 影響範囲一覧(無い場合は出力しない)
+- 変数名や関数名などの具体的な提案(無い場合は出力しない)
+- より良い代替機能やメソッドの提案(無い場合は出力しない)
 
 \`\`\`diff
 ${file.chunks
@@ -127,7 +143,13 @@ ${file.chunks
                 .map((chunk) => chunk.changes.map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`).join("\n"))
                 .join("\n")}
 \`\`\`
+
+document:
+\`\`\`markdown
+${docsContent}
+\`\`\`
 `;
+            console.log("DEBUG", "PROMPT", prompt);
             const queryConfig = {
                 model: OPENAI_API_MODEL,
                 temperature: 0.2,
@@ -155,7 +177,7 @@ function postComment(prDetails, comments) {
                 owner: prDetails.owner,
                 repo: prDetails.repo,
                 issue_number: prDetails.pull_number,
-                body: `# Summary - AI Reviewer
+                body: `# Report - AI Reviewer
 ` +
                     Object.entries(comments)
                         .map(([path, body]) => `## ${path}\n${body}`)
@@ -177,11 +199,7 @@ function main() {
             return;
         }
         const parsedDiff = (0, parse_diff_1.default)(diff);
-        const excludePatterns = core
-            .getInput("exclude")
-            .split(",")
-            .map((s) => s.trim());
-        const filteredDiff = filterDiff(parsedDiff, excludePatterns);
+        const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
         const comments = yield generateComments(filteredDiff, prDetails);
         yield postComment(prDetails, comments);
     });

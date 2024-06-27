@@ -9,6 +9,12 @@ const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
 const OPENAI_API_MODEL: string = core.getInput("OPENAI_API_MODEL");
 
+const EXCLUDE_PATTERNS: string[] = core
+  .getInput("exclude")
+  .split(",")
+  .map((s) => s.trim());
+const DOCS_MD = core.getInput("docs_md");
+
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
 
 const openai = new OpenAI({
@@ -65,15 +71,26 @@ function filterDiff(parsedDiff: File[], excludePatterns: string[]): File[] {
 
 async function generateComments(filteredDiff: File[], prDetails: any): Promise<{ [key: string]: string }> {
   const comments: { [key: string]: string } = {};
+  let docsContent = "";
+
+  // Read the markdown content from DOCS_MD
+  if (DOCS_MD) {
+    try {
+      console.log("DEBUG", "DOCS_MD", DOCS_MD);
+      docsContent = readFileSync(DOCS_MD, "utf8");
+    } catch (error) {
+      console.error("Error reading DOCS_MD file:", error);
+    }
+  }
+
   for (const file of filteredDiff) {
     if (file.to === "/dev/null" || !file.to) continue; // Ignore deleted files or undefined paths
-
     const prompt = `diffについて以下の内容を日本語で出力
-- 要約
+- 変更点
 - テスト項目 / 変更確認方法
-- 影響範囲一覧(なければ出力しない)
-- 変数名や関数名などの具体的な提案(なければ出力しない)
-- より良い代替メソッドがあれば記載(なければ出力しない)
+- 影響範囲一覧(無い場合は出力しない)
+- 変数名や関数名などの具体的な提案(無い場合は出力しない)
+- より良い代替機能やメソッドの提案(無い場合は出力しない)
 
 \`\`\`diff
 ${file.chunks
@@ -81,7 +98,14 @@ ${file.chunks
   .map((chunk: Chunk) => chunk.changes.map((c: Change) => `${c.ln ? c.ln : c.ln2} ${c.content}`).join("\n"))
   .join("\n")}
 \`\`\`
+
+document:
+\`\`\`markdown
+${docsContent}
+\`\`\`
 `;
+
+    console.log("DEBUG", "PROMPT", prompt);
 
     const queryConfig = {
       model: OPENAI_API_MODEL,
@@ -114,7 +138,7 @@ async function postComment(prDetails: any, comments: { [key: string]: string }) 
       repo: prDetails.repo,
       issue_number: prDetails.pull_number,
       body:
-        `# Summary - AI Reviewer
+        `# Report - AI Reviewer
 ` +
         Object.entries(comments)
           .map(([path, body]) => `## ${path}\n${body}`)
@@ -136,11 +160,7 @@ async function main() {
   }
 
   const parsedDiff = parseDiff(diff);
-  const excludePatterns = core
-    .getInput("exclude")
-    .split(",")
-    .map((s) => s.trim());
-  const filteredDiff = filterDiff(parsedDiff, excludePatterns);
+  const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
   const comments = await generateComments(filteredDiff, prDetails);
   await postComment(prDetails, comments);
 }
