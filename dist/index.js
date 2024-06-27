@@ -114,7 +114,13 @@ function generateComments(filteredDiff, prDetails) {
         for (const file of filteredDiff) {
             if (file.to === "/dev/null" || !file.to)
                 continue; // Ignore deleted files or undefined paths
-            const prompt = `diffについて日本語で要約とテスト項目を出力
+            const prompt = `diffについて以下の内容を日本語で出力
+- 要約
+- 影響箇所
+- テスト項目
+- 変数名や関数名などの具体的な提案
+- より良い代替メソッドがあれば記載
+
 \`\`\`diff
 ${file.chunks
                 // @ts-ignore
