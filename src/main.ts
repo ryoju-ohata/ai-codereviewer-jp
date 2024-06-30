@@ -5,10 +5,11 @@ import { Octokit } from "@octokit/rest";
 import parseDiff, { Change, Chunk, File } from "parse-diff";
 import minimatch from "minimatch";
 
+// Constants and Configurations
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
 const OPENAI_API_MODEL: string = core.getInput("OPENAI_API_MODEL");
-
+const SLACK_WEBHOOK_URL = core.getInput("SLACK_WEBHOOK_URL");
 const EXCLUDE_PATTERNS: string[] = core
   .getInput("exclude")
   .split(",")
@@ -16,11 +17,9 @@ const EXCLUDE_PATTERNS: string[] = core
 const DOCS_MD = core.getInput("docs_md");
 
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-});
-
+// Utility Functions
 async function getPullRequestDetails() {
   const { repository, number } = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8"));
   const prResponse = await octokit.pulls.get({
@@ -45,16 +44,14 @@ async function getDiff(prDetails: any, eventData: any): Promise<string | null> {
       pull_number: prDetails.pull_number,
       mediaType: { format: "diff" },
     });
-    return response.data as unknown as string; // Explicitly cast to string
+    return response.data as unknown as string;
   } else if (eventData.action === "synchronize") {
-    const newBaseSha = eventData.before;
-    const newHeadSha = eventData.after;
     const response = await octokit.repos.compareCommits({
       headers: { accept: "application/vnd.github.v3.diff" },
       owner: prDetails.owner,
       repo: prDetails.repo,
-      base: newBaseSha,
-      head: newHeadSha,
+      base: eventData.before,
+      head: eventData.after,
     });
     return String(response.data);
   } else {
@@ -64,16 +61,34 @@ async function getDiff(prDetails: any, eventData: any): Promise<string | null> {
 }
 
 function filterDiff(parsedDiff: File[], excludePatterns: string[]): File[] {
-  return parsedDiff.filter((file) => {
-    return !excludePatterns.some((pattern) => minimatch(file.to ?? "", pattern));
-  });
+  return parsedDiff.filter((file) => !excludePatterns.some((pattern) => minimatch(file.to ?? "", pattern)));
+}
+
+async function generateAIResponse(prompt: string): Promise<string> {
+  const queryConfig = {
+    model: OPENAI_API_MODEL,
+    temperature: 0.2,
+    max_tokens: 700,
+    top_p: 1,
+    frequency_penalty: 0,
+    presence_penalty: 0,
+  };
+  try {
+    const response = await openai.chat.completions.create({
+      ...queryConfig,
+      messages: [{ role: "system", content: prompt }],
+    });
+    return response.choices[0].message?.content?.trim() || "";
+  } catch (error) {
+    console.error("Error in generateAIResponse:", error);
+    return "";
+  }
 }
 
 async function generateComments(filteredDiff: File[], prDetails: any): Promise<{ [key: string]: string }> {
   const comments: { [key: string]: string } = {};
   let docsContent = "";
 
-  // Read the markdown content from DOCS_MD
   if (DOCS_MD) {
     try {
       console.log("DEBUG", "DOCS_MD", DOCS_MD);
@@ -84,13 +99,12 @@ async function generateComments(filteredDiff: File[], prDetails: any): Promise<{
   }
 
   for (const file of filteredDiff) {
-    if (file.to === "/dev/null" || !file.to) continue; // Ignore deleted files or undefined paths
+    if (file.to === "/dev/null" || !file.to) continue;
     const prompt = `diffについて以下の内容を日本語で出力
-- 変更点
-- テスト項目 / 変更確認方法
-- 影響範囲一覧(無い場合は出力しない)
-- 変数名や関数名などの具体的な提案(無い場合は出力しない)
-- より良い代替機能やメソッドの提案(無い場合は出力しない)
+
+- 1. 変更点
+- 2. テスト項目 / 変更確認方法
+- 3. 変数名、関数名、代替機能、代替メソッドなど修正提案
 
 \`\`\`diff
 ${file.chunks
@@ -104,29 +118,7 @@ document:
 ${docsContent}
 \`\`\`
 `;
-
-    console.log("DEBUG", "PROMPT", prompt);
-
-    const queryConfig = {
-      model: OPENAI_API_MODEL,
-      temperature: 0.2,
-      max_tokens: 700,
-      top_p: 1,
-      frequency_penalty: 0,
-      presence_penalty: 0,
-    };
-
-    try {
-      const response = await openai.chat.completions.create({
-        ...queryConfig,
-        messages: [{ role: "system", content: prompt }],
-      });
-
-      const res = response.choices[0].message?.content?.trim() || "{}";
-      comments[file.to!] = res;
-    } catch (error) {
-      console.error("Error in getAIResponse:", error);
-    }
+    comments[file.to] = await generateAIResponse(prompt);
   }
   return comments;
 }
@@ -138,8 +130,7 @@ async function postComment(prDetails: any, comments: { [key: string]: string }) 
       repo: prDetails.repo,
       issue_number: prDetails.pull_number,
       body:
-        `# Report - AI Reviewer
-` +
+        `# Report - AI Reviewer\n` +
         Object.entries(comments)
           .map(([path, body]) => `## ${path}\n${body}`)
           .join("\n"),
@@ -149,23 +140,40 @@ async function postComment(prDetails: any, comments: { [key: string]: string }) 
   }
 }
 
-async function main() {
-  const prDetails = await getPullRequestDetails();
-  const eventData = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
-  const diff = await getDiff(prDetails, eventData);
-
-  if (!diff) {
-    console.log("No diff found");
-    return;
-  }
-
-  const parsedDiff = parseDiff(diff);
-  const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
-  const comments = await generateComments(filteredDiff, prDetails);
-  await postComment(prDetails, comments);
+async function postSlackAllSummary(comments: { [key: string]: string }) {
+  const allSummary = await generateAIResponse(
+    `Slackコメントのための全体の要約を出力\n` +
+      Object.entries(comments)
+        .map(([path, body]) => `## ${path}\n${body}`)
+        .join("\n")
+  );
+  console.log("DEBUG", "ALL_SUMMARY", allSummary);
 }
 
-main().catch((error) => {
-  console.error("Error:", error);
-  process.exit(1);
-});
+// Main Function
+async function main() {
+  try {
+    const prDetails = await getPullRequestDetails();
+    const eventData = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
+    const diff = await getDiff(prDetails, eventData);
+
+    if (!diff) {
+      console.log("No diff found");
+      return;
+    }
+
+    const parsedDiff = parseDiff(diff);
+    const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
+    const comments = await generateComments(filteredDiff, prDetails);
+    await postComment(prDetails, comments);
+
+    if (SLACK_WEBHOOK_URL) {
+      postSlackAllSummary(comments);
+    }
+  } catch (error) {
+    console.error("Error:", error);
+    process.exit(1);
+  }
+}
+
+main();
