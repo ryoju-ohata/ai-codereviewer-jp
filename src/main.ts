@@ -123,6 +123,15 @@ ${docsContent}
   return comments;
 }
 
+async function generateAllSummary(comments: { [key: string]: string }) {
+  return await generateAIResponse(
+    `変更内容の要約をリストで出力\n` +
+      Object.entries(comments)
+        .map(([path, body]) => `## ${path}\n${body}`)
+        .join("\n")
+  );
+}
+
 async function postComment(prDetails: any, comments: { [key: string]: string }) {
   if (Object.keys(comments).length > 0) {
     const comment = {
@@ -140,16 +149,6 @@ async function postComment(prDetails: any, comments: { [key: string]: string }) 
   }
 }
 
-async function postSlackAllSummary(comments: { [key: string]: string }) {
-  const allSummary = await generateAIResponse(
-    `Slackコメントのための全体の要約を出力\n` +
-      Object.entries(comments)
-        .map(([path, body]) => `## ${path}\n${body}`)
-        .join("\n")
-  );
-  console.log("DEBUG", "ALL_SUMMARY", allSummary);
-}
-
 // Main Function
 async function main() {
   try {
@@ -164,12 +163,18 @@ async function main() {
 
     const parsedDiff = parseDiff(diff);
     const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
-    const comments = await generateComments(filteredDiff, prDetails);
-    await postComment(prDetails, comments);
+    let comments = await generateComments(filteredDiff, prDetails);
 
+    const allSummary = await generateAllSummary(comments);
+    comments = {
+      変更内容の要約: allSummary,
+      ...comments,
+    };
     if (SLACK_WEBHOOK_URL) {
-      postSlackAllSummary(comments);
+      console.log("DEBUG", "ALL_SUMMARY", allSummary);
     }
+
+    await postComment(prDetails, comments);
   } catch (error) {
     console.error("Error:", error);
     process.exit(1);

@@ -169,6 +169,14 @@ ${docsContent}
         return comments;
     });
 }
+function generateAllSummary(comments) {
+    return __awaiter(this, void 0, void 0, function* () {
+        return yield generateAIResponse(`変更内容の要約をリストで出力\n` +
+            Object.entries(comments)
+                .map(([path, body]) => `## ${path}\n${body}`)
+                .join("\n"));
+    });
+}
 function postComment(prDetails, comments) {
     return __awaiter(this, void 0, void 0, function* () {
         if (Object.keys(comments).length > 0) {
@@ -186,15 +194,6 @@ function postComment(prDetails, comments) {
         }
     });
 }
-function postSlackAllSummary(comments) {
-    return __awaiter(this, void 0, void 0, function* () {
-        const allSummary = yield generateAIResponse(`Slackコメントのための全体の要約を出力\n` +
-            Object.entries(comments)
-                .map(([path, body]) => `## ${path}\n${body}`)
-                .join("\n"));
-        console.log("DEBUG", "ALL_SUMMARY", allSummary);
-    });
-}
 // Main Function
 function main() {
     var _a;
@@ -209,11 +208,13 @@ function main() {
             }
             const parsedDiff = (0, parse_diff_1.default)(diff);
             const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
-            const comments = yield generateComments(filteredDiff, prDetails);
-            yield postComment(prDetails, comments);
+            let comments = yield generateComments(filteredDiff, prDetails);
+            const allSummary = yield generateAllSummary(comments);
+            comments = Object.assign({ 変更内容の要約: allSummary }, comments);
             if (SLACK_WEBHOOK_URL) {
-                postSlackAllSummary(comments);
+                console.log("DEBUG", "ALL_SUMMARY", allSummary);
             }
+            yield postComment(prDetails, comments);
         }
         catch (error) {
             console.error("Error:", error);
