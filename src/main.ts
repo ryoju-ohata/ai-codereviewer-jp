@@ -5,16 +5,21 @@ import { Octokit } from "@octokit/rest";
 import parseDiff, { Change, Chunk, File } from "parse-diff";
 import minimatch from "minimatch";
 
+// Constants and Configurations
 const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
 const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
 const OPENAI_API_MODEL: string = core.getInput("OPENAI_API_MODEL");
+const SLACK_WEBHOOK_URL = core.getInput("SLACK_WEBHOOK_URL");
+const EXCLUDE_PATTERNS: string[] = core
+  .getInput("exclude")
+  .split(",")
+  .map((s) => s.trim());
+const DOCS_MD = core.getInput("docs_md");
 
 const octokit = new Octokit({ auth: GITHUB_TOKEN });
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-});
-
+// Utility Functions
 async function getPullRequestDetails() {
   const { repository, number } = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8"));
   const prResponse = await octokit.pulls.get({
@@ -39,16 +44,14 @@ async function getDiff(prDetails: any, eventData: any): Promise<string | null> {
       pull_number: prDetails.pull_number,
       mediaType: { format: "diff" },
     });
-    return response.data as unknown as string; // Explicitly cast to string
+    return response.data as unknown as string;
   } else if (eventData.action === "synchronize") {
-    const newBaseSha = eventData.before;
-    const newHeadSha = eventData.after;
     const response = await octokit.repos.compareCommits({
       headers: { accept: "application/vnd.github.v3.diff" },
       owner: prDetails.owner,
       repo: prDetails.repo,
-      base: newBaseSha,
-      head: newHeadSha,
+      base: eventData.before,
+      head: eventData.after,
     });
     return String(response.data);
   } else {
@@ -58,22 +61,50 @@ async function getDiff(prDetails: any, eventData: any): Promise<string | null> {
 }
 
 function filterDiff(parsedDiff: File[], excludePatterns: string[]): File[] {
-  return parsedDiff.filter((file) => {
-    return !excludePatterns.some((pattern) => minimatch(file.to ?? "", pattern));
-  });
+  return parsedDiff.filter((file) => !excludePatterns.some((pattern) => minimatch(file.to ?? "", pattern)));
+}
+
+async function generateAIResponse(prompt: string): Promise<string> {
+  const queryConfig = {
+    model: OPENAI_API_MODEL,
+    temperature: 0.2,
+    max_tokens: 700,
+    top_p: 1,
+    frequency_penalty: 0,
+    presence_penalty: 0,
+  };
+  try {
+    const response = await openai.chat.completions.create({
+      ...queryConfig,
+      messages: [{ role: "system", content: prompt }],
+    });
+    return response.choices[0].message?.content?.trim() || "";
+  } catch (error) {
+    console.error("Error in generateAIResponse:", error);
+    return "";
+  }
 }
 
 async function generateComments(filteredDiff: File[], prDetails: any): Promise<{ [key: string]: string }> {
   const comments: { [key: string]: string } = {};
-  for (const file of filteredDiff) {
-    if (file.to === "/dev/null" || !file.to) continue; // Ignore deleted files or undefined paths
+  let docsContent = "";
 
+  if (DOCS_MD) {
+    try {
+      console.log("DEBUG", "DOCS_MD", DOCS_MD);
+      docsContent = readFileSync(DOCS_MD, "utf8");
+    } catch (error) {
+      console.error("Error reading DOCS_MD file:", error);
+    }
+  }
+
+  for (const file of filteredDiff) {
+    if (file.to === "/dev/null" || !file.to) continue;
     const prompt = `diffについて以下の内容を日本語で出力
-- 要約
-- テスト項目 / 変更確認方法
-- 影響範囲一覧(なければ出力しない)
-- 変数名や関数名などの具体的な提案(なければ出力しない)
-- より良い代替メソッドがあれば記載(なければ出力しない)
+
+- 1. 変更点
+- 2. テスト項目 / 変更確認方法
+- 3. 変数名、関数名、代替機能、代替メソッドなど修正提案
 
 \`\`\`diff
 ${file.chunks
@@ -81,30 +112,24 @@ ${file.chunks
   .map((chunk: Chunk) => chunk.changes.map((c: Change) => `${c.ln ? c.ln : c.ln2} ${c.content}`).join("\n"))
   .join("\n")}
 \`\`\`
+
+document:
+\`\`\`markdown
+${docsContent}
+\`\`\`
 `;
-
-    const queryConfig = {
-      model: OPENAI_API_MODEL,
-      temperature: 0.2,
-      max_tokens: 700,
-      top_p: 1,
-      frequency_penalty: 0,
-      presence_penalty: 0,
-    };
-
-    try {
-      const response = await openai.chat.completions.create({
-        ...queryConfig,
-        messages: [{ role: "system", content: prompt }],
-      });
-
-      const res = response.choices[0].message?.content?.trim() || "{}";
-      comments[file.to!] = res;
-    } catch (error) {
-      console.error("Error in getAIResponse:", error);
-    }
+    comments[file.to] = await generateAIResponse(prompt);
   }
   return comments;
+}
+
+async function generateAllSummary(comments: { [key: string]: string }) {
+  return await generateAIResponse(
+    `「1.変更点」の要約をリストで出力\n` +
+      Object.entries(comments)
+        .map(([path, body]) => `## ${path}\n${body}`)
+        .join("\n")
+  );
 }
 
 async function postComment(prDetails: any, comments: { [key: string]: string }) {
@@ -114,8 +139,7 @@ async function postComment(prDetails: any, comments: { [key: string]: string }) 
       repo: prDetails.repo,
       issue_number: prDetails.pull_number,
       body:
-        `# Summary - AI Reviewer
-` +
+        `# Report - AI Reviewer\n` +
         Object.entries(comments)
           .map(([path, body]) => `## ${path}\n${body}`)
           .join("\n"),
@@ -125,27 +149,36 @@ async function postComment(prDetails: any, comments: { [key: string]: string }) 
   }
 }
 
+// Main Function
 async function main() {
-  const prDetails = await getPullRequestDetails();
-  const eventData = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
-  const diff = await getDiff(prDetails, eventData);
+  try {
+    const prDetails = await getPullRequestDetails();
+    const eventData = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
+    const diff = await getDiff(prDetails, eventData);
 
-  if (!diff) {
-    console.log("No diff found");
-    return;
+    if (!diff) {
+      console.log("No diff found");
+      return;
+    }
+
+    const parsedDiff = parseDiff(diff);
+    const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
+    let comments = await generateComments(filteredDiff, prDetails);
+
+    const allSummary = await generateAllSummary(comments);
+    comments = {
+      変更点の要約: allSummary,
+      ...comments,
+    };
+    if (SLACK_WEBHOOK_URL) {
+      console.log("DEBUG", "ALL_SUMMARY", allSummary);
+    }
+
+    await postComment(prDetails, comments);
+  } catch (error) {
+    console.error("Error:", error);
+    process.exit(1);
   }
-
-  const parsedDiff = parseDiff(diff);
-  const excludePatterns = core
-    .getInput("exclude")
-    .split(",")
-    .map((s) => s.trim());
-  const filteredDiff = filterDiff(parsedDiff, excludePatterns);
-  const comments = await generateComments(filteredDiff, prDetails);
-  await postComment(prDetails, comments);
 }
 
-main().catch((error) => {
-  console.error("Error:", error);
-  process.exit(1);
-});
+main();

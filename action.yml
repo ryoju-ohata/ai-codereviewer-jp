@@ -11,8 +11,16 @@ inputs:
     description: "OpenAI API model."
     required: false
     default: "gpt-4"
+  SLACK_WEBHOOK_URL:
+    description: "Slack webhook URL for posting comments."
+    required: false
+    default: ""
   exclude:
     description: "Glob patterns to exclude files from the diff analysis"
+    required: false
+    default: ""
+  md_docs:
+    description: "Markdown path to documents for improving generation accuracy"
     required: false
     default: ""
 runs:
