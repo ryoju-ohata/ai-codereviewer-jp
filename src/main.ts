@@ -125,7 +125,7 @@ ${docsContent}
 
 async function generateAllSummary(comments: { [key: string]: string }) {
   return await generateAIResponse(
-    `変更内容の要約をリストで出力\n` +
+    `「1.変更点」の要約をリストで出力\n` +
       Object.entries(comments)
         .map(([path, body]) => `## ${path}\n${body}`)
         .join("\n")
@@ -167,7 +167,7 @@ async function main() {
 
     const allSummary = await generateAllSummary(comments);
     comments = {
-      変更内容の要約: allSummary,
+      変更点の要約: allSummary,
       ...comments,
     };
     if (SLACK_WEBHOOK_URL) {

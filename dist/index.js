@@ -171,7 +171,7 @@ ${docsContent}
 }
 function generateAllSummary(comments) {
     return __awaiter(this, void 0, void 0, function* () {
-        return yield generateAIResponse(`変更内容の要約をリストで出力\n` +
+        return yield generateAIResponse(`「1.変更点」の要約をリストで出力\n` +
             Object.entries(comments)
                 .map(([path, body]) => `## ${path}\n${body}`)
                 .join("\n"));
@@ -210,7 +210,7 @@ function main() {
             const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
             let comments = yield generateComments(filteredDiff, prDetails);
             const allSummary = yield generateAllSummary(comments);
-            comments = Object.assign({ 変更内容の要約: allSummary }, comments);
+            comments = Object.assign({ 変更点の要約: allSummary }, comments);
             if (SLACK_WEBHOOK_URL) {
                 console.log("DEBUG", "ALL_SUMMARY", allSummary);
             }
