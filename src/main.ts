@@ -125,7 +125,7 @@ ${docsContent}
 
 async function generateAllSummary(comments: { [key: string]: string }) {
   return await generateAIResponse(
-    `ファイルごとに内容の要約をリストで出力\n` +
+    `変更の要約をリストで出力。要約はファイルごとに出力しないでください。全体を俯瞰して要約を出力してください\n` +
       Object.entries(comments)
         .map(([path, body]) => `ファイル:${path}\n内容:${body}`)
         .join("\n---\n")

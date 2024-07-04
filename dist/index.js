@@ -171,10 +171,10 @@ ${docsContent}
 }
 function generateAllSummary(comments) {
     return __awaiter(this, void 0, void 0, function* () {
-        return yield generateAIResponse(`「1.変更点」の要約をリストで出力\n` +
+        return yield generateAIResponse(`変更の要約をリストで出力。要約はファイルごとに出力しないでください。全体を俯瞰して要約を出力してください\n` +
             Object.entries(comments)
-                .map(([path, body]) => `## ${path}\n${body}`)
-                .join("\n"));
+                .map(([path, body]) => `ファイル:${path}\n内容:${body}`)
+                .join("\n---\n"));
     });
 }
 function postComment(prDetails, comments) {
