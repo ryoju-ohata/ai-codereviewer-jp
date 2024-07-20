@@ -146,12 +146,7 @@ function generateComments(filteredDiff, prDetails) {
         for (const file of filteredDiff) {
             if (file.to === "/dev/null" || !file.to)
                 continue;
-            const prompt = `diffについて以下の内容を日本語で出力
-
-- 1. 変更点
-- 2. テスト項目 / 変更確認方法
-- 3. 変数名、関数名、代替機能、代替メソッドなど修正提案
-
+            const prompt = `diffについて内容の要約とコードレビューを日本語で出力
 \`\`\`diff
 ${file.chunks
                 // @ts-ignore
@@ -169,14 +164,14 @@ ${docsContent}
         return comments;
     });
 }
-function generateAllSummary(comments) {
-    return __awaiter(this, void 0, void 0, function* () {
-        return yield generateAIResponse(`変更の要約をリストで出力。要約はファイルごとに出力しないでください。全体を俯瞰して要約を出力してください\n` +
-            Object.entries(comments)
-                .map(([path, body]) => `ファイル:${path}\n内容:${body}`)
-                .join("\n---\n"));
-    });
-}
+// async function generateAllSummary(comments: { [key: string]: string }) {
+//   return await generateAIResponse(
+//     `変更の要約をリストで出力。要約はファイルごとに出力しないでください。全体を俯瞰して要約を出力してください\n` +
+//       Object.entries(comments)
+//         .map(([path, body]) => `ファイル:${path}\n内容:${body}`)
+//         .join("\n---\n")
+//   );
+// }
 function postComment(prDetails, comments) {
     return __awaiter(this, void 0, void 0, function* () {
         if (Object.keys(comments).length > 0) {
@@ -209,11 +204,14 @@ function main() {
             const parsedDiff = (0, parse_diff_1.default)(diff);
             const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
             let comments = yield generateComments(filteredDiff, prDetails);
-            const allSummary = yield generateAllSummary(comments);
-            comments = Object.assign({ 変更点の要約: allSummary }, comments);
-            if (SLACK_WEBHOOK_URL) {
-                console.log("DEBUG", "ALL_SUMMARY", allSummary);
-            }
+            // const allSummary = await generateAllSummary(comments);
+            // comments = {
+            //   変更点の要約: allSummary,
+            //   ...comments,
+            // };
+            // if (SLACK_WEBHOOK_URL) {
+            //   console.log("DEBUG", "ALL_SUMMARY", allSummary);
+            // }
             yield postComment(prDetails, comments);
         }
         catch (error) {
