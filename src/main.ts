@@ -100,7 +100,7 @@ async function generateComments(filteredDiff: File[], prDetails: any): Promise<{
 
   for (const file of filteredDiff) {
     if (file.to === "/dev/null" || !file.to) continue;
-    const prompt = `diffについて内容の要約と3行程度のコードレビューを日本語で出力
+    const prompt = `diffについて変更概要とコードレビューの要約を日本語で出力
 \`\`\`diff
 ${file.chunks
   // @ts-ignore
