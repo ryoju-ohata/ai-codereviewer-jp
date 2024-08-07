@@ -49,19 +49,20 @@ const rest_1 = __nccwpck_require__(5375);
 const parse_diff_1 = __importDefault(__nccwpck_require__(4833));
 const minimatch_1 = __importDefault(__nccwpck_require__(2002));
 // Constants and Configurations
-const GITHUB_TOKEN = core.getInput("GITHUB_TOKEN");
-const OPENAI_API_KEY = core.getInput("OPENAI_API_KEY");
-const OPENAI_API_MODEL = core.getInput("OPENAI_API_MODEL");
-const SLACK_WEBHOOK_URL = core.getInput("SLACK_WEBHOOK_URL");
-const EXCLUDE_PATTERNS = core
-    .getInput("exclude")
-    .split(",")
-    .map((s) => s.trim());
-const DOCS_MD = core.getInput("docs_md");
-const octokit = new rest_1.Octokit({ auth: GITHUB_TOKEN });
-const openai = new openai_1.default({ apiKey: OPENAI_API_KEY });
+const CONFIG = {
+    GITHUB_TOKEN: core.getInput("GITHUB_TOKEN"),
+    OPENAI_API_KEY: core.getInput("OPENAI_API_KEY"),
+    OPENAI_API_MODEL: core.getInput("OPENAI_API_MODEL"),
+    EXCLUDE_PATTERNS: core
+        .getInput("exclude")
+        .split(",")
+        .map((s) => s.trim()),
+    DOCS_MD: core.getInput("docs_md"),
+};
+const octokit = new rest_1.Octokit({ auth: CONFIG.GITHUB_TOKEN });
+const openai = new openai_1.default({ apiKey: CONFIG.OPENAI_API_KEY });
 // Utility Functions
-function getPullRequestDetails() {
+function fetchPullRequestDetails() {
     var _a, _b;
     return __awaiter(this, void 0, void 0, function* () {
         const { repository, number } = JSON.parse((0, fs_1.readFileSync)(process.env.GITHUB_EVENT_PATH || "", "utf8"));
@@ -73,24 +74,24 @@ function getPullRequestDetails() {
         return {
             owner: repository.owner.login,
             repo: repository.name,
-            pull_number: number,
+            pullNumber: number,
             title: (_a = prResponse.data.title) !== null && _a !== void 0 ? _a : "",
             description: (_b = prResponse.data.body) !== null && _b !== void 0 ? _b : "",
         };
     });
 }
-function getDiff(prDetails, eventData) {
+function fetchDiff(prDetails, eventData) {
     return __awaiter(this, void 0, void 0, function* () {
         if (eventData.action === "opened") {
             const response = yield octokit.pulls.get({
                 owner: prDetails.owner,
                 repo: prDetails.repo,
-                pull_number: prDetails.pull_number,
+                pull_number: prDetails.pullNumber,
                 mediaType: { format: "diff" },
             });
             return response.data;
         }
-        else if (eventData.action === "synchronize") {
+        else if (eventData.action === "synchronize" && eventData.before && eventData.after) {
             const response = yield octokit.repos.compareCommits({
                 headers: { accept: "application/vnd.github.v3.diff" },
                 owner: prDetails.owner,
@@ -106,14 +107,14 @@ function getDiff(prDetails, eventData) {
         }
     });
 }
-function filterDiff(parsedDiff, excludePatterns) {
+function filterDiffFiles(parsedDiff, excludePatterns) {
     return parsedDiff.filter((file) => !excludePatterns.some((pattern) => { var _a; return (0, minimatch_1.default)((_a = file.to) !== null && _a !== void 0 ? _a : "", pattern); }));
 }
-function generateAIResponse(prompt) {
-    var _a, _b;
+function generateAIReview(prompt) {
+    var _a, _b, _c;
     return __awaiter(this, void 0, void 0, function* () {
         const queryConfig = {
-            model: OPENAI_API_MODEL,
+            model: CONFIG.OPENAI_API_MODEL,
             temperature: 0.2,
             max_tokens: 700,
             top_p: 1,
@@ -122,36 +123,39 @@ function generateAIResponse(prompt) {
         };
         try {
             const response = yield openai.chat.completions.create(Object.assign(Object.assign({}, queryConfig), { messages: [{ role: "system", content: prompt }] }));
-            return ((_b = (_a = response.choices[0].message) === null || _a === void 0 ? void 0 : _a.content) === null || _b === void 0 ? void 0 : _b.trim()) || "";
+            return (_c = (_b = (_a = response.choices[0].message) === null || _a === void 0 ? void 0 : _a.content) === null || _b === void 0 ? void 0 : _b.trim()) !== null && _c !== void 0 ? _c : "";
         }
         catch (error) {
-            console.error("Error in generateAIResponse:", error);
+            console.error("Error in generateAIReview:", error);
             return "";
         }
     });
 }
-function generateComments(filteredDiff, prDetails) {
+function generateFileReviews(filteredDiff, docsContent) {
     return __awaiter(this, void 0, void 0, function* () {
-        const comments = {};
-        let docsContent = "";
-        if (DOCS_MD) {
-            try {
-                console.log("DEBUG", "DOCS_MD", DOCS_MD);
-                docsContent = (0, fs_1.readFileSync)(DOCS_MD, "utf8");
-            }
-            catch (error) {
-                console.error("Error reading DOCS_MD file:", error);
-            }
-        }
-        for (const file of filteredDiff) {
+        const reviewPromises = filteredDiff.map((file) => __awaiter(this, void 0, void 0, function* () {
             if (file.to === "/dev/null" || !file.to)
-                continue;
-            const prompt = `diffについて変更概要とコードレビューを合わせて3行以内の日本語で出力
+                return null;
+            const prompt = createReviewPrompt(file, docsContent);
+            const review = yield generateAIReview(prompt);
+            return { [file.to]: review };
+        }));
+        const reviews = yield Promise.all(reviewPromises);
+        return Object.assign({}, ...reviews.filter(Boolean));
+    });
+}
+function createReviewPrompt(file, docsContent) {
+    return `diffについて変更概要とコードレビューを合わせて3行以内の日本語で出力
 \`\`\`diff
 ${file.chunks
-                // @ts-ignore
-                .map((chunk) => chunk.changes.map((c) => `${c.ln ? c.ln : c.ln2} ${c.content}`).join("\n"))
-                .join("\n")}
+        .map((chunk) => chunk.changes
+        .map((c) => {
+        var _a;
+        // @ts-ignore
+        return `${(_a = c.ln) !== null && _a !== void 0 ? _a : c.ln2} ${c.content}`;
+    })
+        .join("\n"))
+        .join("\n")}
 \`\`\`
 
 document:
@@ -159,28 +163,28 @@ document:
 ${docsContent}
 \`\`\`
 `;
-            comments[file.to] = yield generateAIResponse(prompt);
-        }
-        return comments;
+}
+function fetchLatestCommitMessage(prDetails) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const response = yield octokit.pulls.listCommits({
+            owner: prDetails.owner,
+            repo: prDetails.repo,
+            pull_number: prDetails.pullNumber,
+        });
+        const latestCommit = response.data[response.data.length - 1];
+        return latestCommit.commit.message;
     });
 }
-// async function generateAllSummary(comments: { [key: string]: string }) {
-//   return await generateAIResponse(
-//     `変更の要約をリストで出力。要約はファイルごとに出力しないでください。全体を俯瞰して要約を出力してください\n` +
-//       Object.entries(comments)
-//         .map(([path, body]) => `ファイル:${path}\n内容:${body}`)
-//         .join("\n---\n")
-//   );
-// }
-function postComment(prDetails, comments) {
+function postReviewComment(prDetails, reviews) {
     return __awaiter(this, void 0, void 0, function* () {
-        if (Object.keys(comments).length > 0) {
+        if (Object.keys(reviews).length > 0) {
+            const commitMessage = yield fetchLatestCommitMessage(prDetails);
             const comment = {
                 owner: prDetails.owner,
                 repo: prDetails.repo,
-                issue_number: prDetails.pull_number,
-                body: `# Report - AI Reviewer\n` +
-                    Object.entries(comments)
+                issue_number: prDetails.pullNumber,
+                body: `# ${commitMessage} - AI Reviewer\n` +
+                    Object.entries(reviews)
                         .map(([path, body]) => `## ${path}\n${body}`)
                         .join("\n"),
             };
@@ -189,30 +193,34 @@ function postComment(prDetails, comments) {
         }
     });
 }
+function readDocsContent() {
+    if (!CONFIG.DOCS_MD)
+        return "";
+    try {
+        return (0, fs_1.readFileSync)(CONFIG.DOCS_MD, "utf8");
+    }
+    catch (error) {
+        console.error("Error reading DOCS_MD file:", error);
+        return "";
+    }
+}
 // Main Function
 function main() {
     var _a;
     return __awaiter(this, void 0, void 0, function* () {
         try {
-            const prDetails = yield getPullRequestDetails();
+            const prDetails = yield fetchPullRequestDetails();
             const eventData = JSON.parse((0, fs_1.readFileSync)((_a = process.env.GITHUB_EVENT_PATH) !== null && _a !== void 0 ? _a : "", "utf8"));
-            const diff = yield getDiff(prDetails, eventData);
+            const diff = yield fetchDiff(prDetails, eventData);
             if (!diff) {
                 console.log("No diff found");
                 return;
             }
             const parsedDiff = (0, parse_diff_1.default)(diff);
-            const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
-            let comments = yield generateComments(filteredDiff, prDetails);
-            // const allSummary = await generateAllSummary(comments);
-            // comments = {
-            //   変更点の要約: allSummary,
-            //   ...comments,
-            // };
-            // if (SLACK_WEBHOOK_URL) {
-            //   console.log("DEBUG", "ALL_SUMMARY", allSummary);
-            // }
-            yield postComment(prDetails, comments);
+            const filteredDiff = filterDiffFiles(parsedDiff, CONFIG.EXCLUDE_PATTERNS);
+            const docsContent = readDocsContent();
+            const reviews = yield generateFileReviews(filteredDiff, docsContent);
+            yield postReviewComment(prDetails, reviews);
         }
         catch (error) {
             console.error("Error:", error);
