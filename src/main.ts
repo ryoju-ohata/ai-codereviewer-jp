@@ -127,14 +127,25 @@ ${docsContent}
 //   );
 // }
 
+async function getLatestCommitMessage(prDetails: any): Promise<string> {
+  const response = await octokit.pulls.listCommits({
+    owner: prDetails.owner,
+    repo: prDetails.repo,
+    pull_number: prDetails.pull_number,
+  });
+  const latestCommit = response.data[response.data.length - 1];
+  return latestCommit.commit.message;
+}
+
 async function postComment(prDetails: any, comments: { [key: string]: string }) {
   if (Object.keys(comments).length > 0) {
+    const commitMessage = await getLatestCommitMessage(prDetails);
     const comment = {
       owner: prDetails.owner,
       repo: prDetails.repo,
       issue_number: prDetails.pull_number,
       body:
-        `# Report - AI Reviewer\n` +
+        `# ${commitMessage} - AI Reviewer\n` +
         Object.entries(comments)
           .map(([path, body]) => `## ${path}\n${body}`)
           .join("\n"),
