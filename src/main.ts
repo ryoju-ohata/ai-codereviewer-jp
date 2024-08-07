@@ -2,25 +2,41 @@ import { readFileSync } from "fs";
 import * as core from "@actions/core";
 import OpenAI from "openai";
 import { Octokit } from "@octokit/rest";
-import parseDiff, { Change, Chunk, File } from "parse-diff";
+import parseDiff, { File } from "parse-diff";
 import minimatch from "minimatch";
 
-// Constants and Configurations
-const GITHUB_TOKEN: string = core.getInput("GITHUB_TOKEN");
-const OPENAI_API_KEY: string = core.getInput("OPENAI_API_KEY");
-const OPENAI_API_MODEL: string = core.getInput("OPENAI_API_MODEL");
-const SLACK_WEBHOOK_URL = core.getInput("SLACK_WEBHOOK_URL");
-const EXCLUDE_PATTERNS: string[] = core
-  .getInput("exclude")
-  .split(",")
-  .map((s) => s.trim());
-const DOCS_MD = core.getInput("docs_md");
+// Types
+type PullRequestDetails = {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  title: string;
+  description: string;
+};
 
-const octokit = new Octokit({ auth: GITHUB_TOKEN });
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+type EventData = {
+  action: string;
+  before?: string;
+  after?: string;
+};
+
+// Constants and Configurations
+const CONFIG = {
+  GITHUB_TOKEN: core.getInput("GITHUB_TOKEN"),
+  OPENAI_API_KEY: core.getInput("OPENAI_API_KEY"),
+  OPENAI_API_MODEL: core.getInput("OPENAI_API_MODEL"),
+  EXCLUDE_PATTERNS: core
+    .getInput("exclude")
+    .split(",")
+    .map((s) => s.trim()),
+  DOCS_MD: core.getInput("docs_md"),
+};
+
+const octokit = new Octokit({ auth: CONFIG.GITHUB_TOKEN });
+const openai = new OpenAI({ apiKey: CONFIG.OPENAI_API_KEY });
 
 // Utility Functions
-async function getPullRequestDetails() {
+async function fetchPullRequestDetails(): Promise<PullRequestDetails> {
   const { repository, number } = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH || "", "utf8"));
   const prResponse = await octokit.pulls.get({
     owner: repository.owner.login,
@@ -30,22 +46,22 @@ async function getPullRequestDetails() {
   return {
     owner: repository.owner.login,
     repo: repository.name,
-    pull_number: number,
+    pullNumber: number,
     title: prResponse.data.title ?? "",
     description: prResponse.data.body ?? "",
   };
 }
 
-async function getDiff(prDetails: any, eventData: any): Promise<string | null> {
+async function fetchDiff(prDetails: PullRequestDetails, eventData: EventData): Promise<string | null> {
   if (eventData.action === "opened") {
     const response = await octokit.pulls.get({
       owner: prDetails.owner,
       repo: prDetails.repo,
-      pull_number: prDetails.pull_number,
+      pull_number: prDetails.pullNumber,
       mediaType: { format: "diff" },
     });
     return response.data as unknown as string;
-  } else if (eventData.action === "synchronize") {
+  } else if (eventData.action === "synchronize" && eventData.before && eventData.after) {
     const response = await octokit.repos.compareCommits({
       headers: { accept: "application/vnd.github.v3.diff" },
       owner: prDetails.owner,
@@ -60,13 +76,13 @@ async function getDiff(prDetails: any, eventData: any): Promise<string | null> {
   }
 }
 
-function filterDiff(parsedDiff: File[], excludePatterns: string[]): File[] {
+function filterDiffFiles(parsedDiff: File[], excludePatterns: string[]): File[] {
   return parsedDiff.filter((file) => !excludePatterns.some((pattern) => minimatch(file.to ?? "", pattern)));
 }
 
-async function generateAIResponse(prompt: string): Promise<string> {
+async function generateAIReview(prompt: string): Promise<string> {
   const queryConfig = {
-    model: OPENAI_API_MODEL,
+    model: CONFIG.OPENAI_API_MODEL,
     temperature: 0.2,
     max_tokens: 700,
     top_p: 1,
@@ -78,33 +94,37 @@ async function generateAIResponse(prompt: string): Promise<string> {
       ...queryConfig,
       messages: [{ role: "system", content: prompt }],
     });
-    return response.choices[0].message?.content?.trim() || "";
+    return response.choices[0].message?.content?.trim() ?? "";
   } catch (error) {
-    console.error("Error in generateAIResponse:", error);
+    console.error("Error in generateAIReview:", error);
     return "";
   }
 }
 
-async function generateComments(filteredDiff: File[], prDetails: any): Promise<{ [key: string]: string }> {
-  const comments: { [key: string]: string } = {};
-  let docsContent = "";
+async function generateFileReviews(filteredDiff: File[], docsContent: string): Promise<{ [key: string]: string }> {
+  const reviewPromises = filteredDiff.map(async (file) => {
+    if (file.to === "/dev/null" || !file.to) return null;
+    const prompt = createReviewPrompt(file, docsContent);
+    const review = await generateAIReview(prompt);
+    return { [file.to]: review };
+  });
 
-  if (DOCS_MD) {
-    try {
-      console.log("DEBUG", "DOCS_MD", DOCS_MD);
-      docsContent = readFileSync(DOCS_MD, "utf8");
-    } catch (error) {
-      console.error("Error reading DOCS_MD file:", error);
-    }
-  }
+  const reviews = await Promise.all(reviewPromises);
+  return Object.assign({}, ...reviews.filter(Boolean));
+}
 
-  for (const file of filteredDiff) {
-    if (file.to === "/dev/null" || !file.to) continue;
-    const prompt = `diffについて変更概要とコードレビューを合わせて3行以内の日本語で出力
+function createReviewPrompt(file: File, docsContent: string): string {
+  return `diffについて変更概要とコードレビューを合わせて3行以内の日本語で出力
 \`\`\`diff
 ${file.chunks
-  // @ts-ignore
-  .map((chunk: Chunk) => chunk.changes.map((c: Change) => `${c.ln ? c.ln : c.ln2} ${c.content}`).join("\n"))
+  .map((chunk) =>
+    chunk.changes
+      .map((c) => {
+        // @ts-ignore
+        return `${c.ln ?? c.ln2} ${c.content}`;
+      })
+      .join("\n")
+  )
   .join("\n")}
 \`\`\`
 
@@ -113,40 +133,28 @@ document:
 ${docsContent}
 \`\`\`
 `;
-    comments[file.to] = await generateAIResponse(prompt);
-  }
-  return comments;
 }
 
-// async function generateAllSummary(comments: { [key: string]: string }) {
-//   return await generateAIResponse(
-//     `変更の要約をリストで出力。要約はファイルごとに出力しないでください。全体を俯瞰して要約を出力してください\n` +
-//       Object.entries(comments)
-//         .map(([path, body]) => `ファイル:${path}\n内容:${body}`)
-//         .join("\n---\n")
-//   );
-// }
-
-async function getLatestCommitMessage(prDetails: any): Promise<string> {
+async function fetchLatestCommitMessage(prDetails: PullRequestDetails): Promise<string> {
   const response = await octokit.pulls.listCommits({
     owner: prDetails.owner,
     repo: prDetails.repo,
-    pull_number: prDetails.pull_number,
+    pull_number: prDetails.pullNumber,
   });
   const latestCommit = response.data[response.data.length - 1];
   return latestCommit.commit.message;
 }
 
-async function postComment(prDetails: any, comments: { [key: string]: string }) {
-  if (Object.keys(comments).length > 0) {
-    const commitMessage = await getLatestCommitMessage(prDetails);
+async function postReviewComment(prDetails: PullRequestDetails, reviews: { [key: string]: string }) {
+  if (Object.keys(reviews).length > 0) {
+    const commitMessage = await fetchLatestCommitMessage(prDetails);
     const comment = {
       owner: prDetails.owner,
       repo: prDetails.repo,
-      issue_number: prDetails.pull_number,
+      issue_number: prDetails.pullNumber,
       body:
         `# ${commitMessage} - AI Reviewer\n` +
-        Object.entries(comments)
+        Object.entries(reviews)
           .map(([path, body]) => `## ${path}\n${body}`)
           .join("\n"),
     };
@@ -155,12 +163,22 @@ async function postComment(prDetails: any, comments: { [key: string]: string }) 
   }
 }
 
+function readDocsContent(): string {
+  if (!CONFIG.DOCS_MD) return "";
+  try {
+    return readFileSync(CONFIG.DOCS_MD, "utf8");
+  } catch (error) {
+    console.error("Error reading DOCS_MD file:", error);
+    return "";
+  }
+}
+
 // Main Function
 async function main() {
   try {
-    const prDetails = await getPullRequestDetails();
-    const eventData = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
-    const diff = await getDiff(prDetails, eventData);
+    const prDetails = await fetchPullRequestDetails();
+    const eventData: EventData = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
+    const diff = await fetchDiff(prDetails, eventData);
 
     if (!diff) {
       console.log("No diff found");
@@ -168,19 +186,11 @@ async function main() {
     }
 
     const parsedDiff = parseDiff(diff);
-    const filteredDiff = filterDiff(parsedDiff, EXCLUDE_PATTERNS);
-    let comments = await generateComments(filteredDiff, prDetails);
+    const filteredDiff = filterDiffFiles(parsedDiff, CONFIG.EXCLUDE_PATTERNS);
+    const docsContent = readDocsContent();
+    const reviews = await generateFileReviews(filteredDiff, docsContent);
 
-    // const allSummary = await generateAllSummary(comments);
-    // comments = {
-    //   変更点の要約: allSummary,
-    //   ...comments,
-    // };
-    // if (SLACK_WEBHOOK_URL) {
-    //   console.log("DEBUG", "ALL_SUMMARY", allSummary);
-    // }
-
-    await postComment(prDetails, comments);
+    await postReviewComment(prDetails, reviews);
   } catch (error) {
     console.error("Error:", error);
     process.exit(1);
