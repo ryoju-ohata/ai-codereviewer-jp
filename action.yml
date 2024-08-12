@@ -19,10 +19,6 @@ inputs:
     description: "Glob patterns to exclude files from the diff analysis"
     required: false
     default: ""
-  md_docs:
-    description: "Markdown path to documents for improving generation accuracy"
-    required: false
-    default: ""
 runs:
   using: "node20"
   main: "dist/index.js"

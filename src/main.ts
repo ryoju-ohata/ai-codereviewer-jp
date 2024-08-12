@@ -29,7 +29,6 @@ const CONFIG = {
     .getInput("exclude")
     .split(",")
     .map((s) => s.trim()),
-  DOCS_MD: core.getInput("docs_md"),
 };
 
 const octokit = new Octokit({ auth: CONFIG.GITHUB_TOKEN });
@@ -101,10 +100,10 @@ async function generateAIReview(prompt: string): Promise<string> {
   }
 }
 
-async function generateFileReviews(filteredDiff: File[], docsContent: string): Promise<{ [key: string]: string }> {
+async function generateFileReviews(filteredDiff: File[]): Promise<{ [key: string]: string }> {
   const reviewPromises = filteredDiff.map(async (file) => {
     if (file.to === "/dev/null" || !file.to) return null;
-    const prompt = createReviewPrompt(file, docsContent);
+    const prompt = createReviewPrompt(file);
     const review = await generateAIReview(prompt);
     return { [file.to]: review };
   });
@@ -113,14 +112,20 @@ async function generateFileReviews(filteredDiff: File[], docsContent: string): P
   return Object.assign({}, ...reviews.filter(Boolean));
 }
 
-function createReviewPrompt(file: File, docsContent: string): string {
-  return `diffについて変更概要とコードレビューを合わせて3行以内の日本語で出力
-またコメントの先頭には、以下の種別をつける (出力例: EXCELLENT: コメント)
-- EXCELLENT: 素晴らしい実装や変更
-- GOOD: 良い変更や修正で、全体的に問題がない
-- NOTICE: 注意が必要な点があるが、致命的ではない
-- IMPROVE: 改善が必要な点があり、修正を推奨
-- CRITICAL: 重大な問題があり、修正が必須
+function createReviewPrompt(file: File): string {
+  return `以下のdiffに基づいて、変更の概要とコードレビューを日本語で提供してください。回答は3〜5文で簡潔にまとめ、以下の評価カテゴリを使用してください：
+
+- 🌟 EXCELLENT: 素晴らしい実装、最適化、セキュリティ向上、またはパフォーマンス改善
+- 👍 GOOD: 適切な変更や修正で、全体的に問題がない
+- 📝 NOTICE: 軽微な改善の余地がある、または注意が必要な点
+- 🛠️ IMPROVE: 改善が推奨される重要な点
+- 🚨 CRITICAL: 即時の対応が必要な重大な問題
+
+各コメントの冒頭に適切なカテゴリと絵文字を付けてください。変更の影響、コードの品質、およびプロジェクトのベストプラクティスを考慮してレビューを行ってください。
+
+ファイル: ${file.to}
+
+変更内容:
 \`\`\`diff
 ${file.chunks
   .map((chunk) =>
@@ -134,11 +139,7 @@ ${file.chunks
   .join("\n")}
 \`\`\`
 
-document:
-\`\`\`markdown
-${docsContent}
-\`\`\`
-`;
+上記の情報を基に、変更の質と影響を評価し、具体的で建設的なフィードバックを提供してください。`;
 }
 
 async function fetchLatestCommitMessage(prDetails: PullRequestDetails): Promise<string> {
@@ -169,16 +170,6 @@ async function postReviewComment(prDetails: PullRequestDetails, reviews: { [key:
   }
 }
 
-function readDocsContent(): string {
-  if (!CONFIG.DOCS_MD) return "";
-  try {
-    return readFileSync(CONFIG.DOCS_MD, "utf8");
-  } catch (error) {
-    console.error("Error reading DOCS_MD file:", error);
-    return "";
-  }
-}
-
 // Main Function
 async function main() {
   try {
@@ -193,8 +184,7 @@ async function main() {
 
     const parsedDiff = parseDiff(diff);
     const filteredDiff = filterDiffFiles(parsedDiff, CONFIG.EXCLUDE_PATTERNS);
-    const docsContent = readDocsContent();
-    const reviews = await generateFileReviews(filteredDiff, docsContent);
+    const reviews = await generateFileReviews(filteredDiff);
 
     await postReviewComment(prDetails, reviews);
   } catch (error) {
