@@ -146,6 +146,12 @@ function generateFileReviews(filteredDiff, docsContent) {
 }
 function createReviewPrompt(file, docsContent) {
     return `diffについて変更概要とコードレビューを合わせて3行以内の日本語で出力
+またコメントの先頭には、以下の種別をつける (出力例: EXCELLENT: コメント)
+- EXCELLENT: 素晴らしい実装や変更
+- GOOD: 良い変更や修正で、全体的に問題がない
+- NOTICE: 注意が必要な点があるが、致命的ではない
+- IMPROVE: 改善が必要な点があり、修正を推奨
+- CRITICAL: 重大な問題があり、修正が必須
 \`\`\`diff
 ${file.chunks
         .map((chunk) => chunk.changes
