@@ -19,4 +19,3 @@ jobs:
           OPENAI_API_MODEL: "gpt-4o-mini"
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           exclude: "yarn.lock,dist/**"
-          md_docs: "./README.md"
